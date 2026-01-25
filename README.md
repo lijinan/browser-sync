@@ -89,7 +89,7 @@ docker-compose up -d
 
 # 5. 访问应用
 # Web界面: http://localhost:8080
-# API接口: http://localhost:3000
+# API接口: http://localhost:3001
 ```
 
 ### 开发环境
@@ -106,8 +106,8 @@ npm install
 npm run dev
 
 # 访问地址
-# 前端: http://localhost:3001
-# 后端: http://localhost:3000
+# 前端: http://localhost:3002
+# 后端: http://localhost:3001
 ```
 
 ## 项目结构
