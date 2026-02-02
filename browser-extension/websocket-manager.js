@@ -61,10 +61,10 @@ class WebSocketManager {
       this.notifyConnectionCallbacks('connected');
     };
 
-    this.ws.onmessage = (event) => {
+    this.ws.onmessage = async (event) => {
       try {
         const message = JSON.parse(event.data);
-        this.handleMessage(message);
+        await this.handleMessage(message);
       } catch (error) {
         console.error('❌ 处理WebSocket消息失败:', error);
       }
@@ -90,12 +90,32 @@ class WebSocketManager {
   }
 
   // 处理接收到的消息
-  handleMessage(message) {
+  async handleMessage(message) {
     // console.log('📨 收到WebSocket消息:', message);
 
     switch (message.type) {
       case 'connection':
         console.log('🔗 连接状态:', message.status);
+        break;
+
+      case 'init':
+        console.log('🚀 收到初始化数据:', message.data);
+        if (message.data) {
+          // 同步初始书签到本地
+          if (message.data.bookmarks && Array.isArray(message.data.bookmarks)) {
+            console.log(`📚 同步 ${message.data.bookmarks.length} 个书签到本地`);
+            for (const bookmark of message.data.bookmarks) {
+              await this.syncBookmarkToLocal(bookmark, 'created');
+            }
+          }
+          // 同步初始密码到本地
+          if (message.data.passwords && Array.isArray(message.data.passwords)) {
+            console.log(`🔐 同步 ${message.data.passwords.length} 个密码到本地`);
+            for (const password of message.data.passwords) {
+              await this.syncPasswordToLocal(password, 'created');
+            }
+          }
+        }
         break;
         
       case 'pong':

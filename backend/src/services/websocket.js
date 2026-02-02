@@ -168,6 +168,9 @@ class WebSocketService {
             subscriptions: ws.subscriptions,
             message: '订阅成功'
           });
+          
+          // 发送初始数据
+          this.sendInitialData(ws);
           break;
           
         default:
@@ -202,6 +205,53 @@ class WebSocketService {
       userConnections.forEach(ws => {
         this.sendToClient(ws, message);
       });
+    }
+  }
+
+  // 发送初始数据给客户端
+  async sendInitialData(ws) {
+    try {
+      const userId = ws.userId;
+      if (!userId) return;
+
+      const data = {};
+
+      // 获取用户的书签数据
+      if (!ws.subscriptions || ws.subscriptions.includes('bookmarks')) {
+        const bookmarks = await db('bookmarks')
+          .where({ user_id: userId })
+          .select('id', 'encrypted_data', 'created_at', 'updated_at');
+        data.bookmarks = bookmarks.map(b => ({
+          id: b.id,
+          encrypted_data: b.encrypted_data,
+          created_at: b.created_at,
+          updated_at: b.updated_at
+        }));
+      }
+
+      // 获取用户的密码数据
+      if (!ws.subscriptions || ws.subscriptions.includes('passwords')) {
+        const passwords = await db('passwords')
+          .where({ user_id: userId })
+          .select('id', 'encrypted_data', 'created_at', 'updated_at');
+        data.passwords = passwords.map(p => ({
+          id: p.id,
+          encrypted_data: p.encrypted_data,
+          created_at: p.created_at,
+          updated_at: p.updated_at
+        }));
+      }
+
+      // 发送初始化数据
+      this.sendToClient(ws, {
+        type: 'init',
+        data: data,
+        timestamp: new Date().toISOString()
+      });
+
+      console.log(`📦 发送初始数据给用户 ${ws.userName} (ID: ${userId}): ${data.bookmarks?.length || 0} 个书签, ${data.passwords?.length || 0} 个密码`);
+    } catch (error) {
+      console.error('发送初始数据失败:', error);
     }
   }
 
