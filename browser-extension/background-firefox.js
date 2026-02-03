@@ -33,6 +33,14 @@ class ExtensionBackgroundFirefox {
 
     console.log('✅ Firefox扩展API已加载')
 
+    // 监听浏览器启动事件（Firefox也支持这个API）
+    if (this.extensionAPI.runtime.onStartup) {
+      this.extensionAPI.runtime.onStartup.addListener(() => {
+        console.log('🚀 浏览器启动事件触发 (Firefox)')
+        this.handleBrowserStartup()
+      })
+    }
+
     // 安装时初始化
     this.extensionAPI.runtime.onInstalled.addListener(() => {
       this.createContextMenus()
@@ -144,6 +152,48 @@ class ExtensionBackgroundFirefox {
     }
   }
 
+  // 处理浏览器启动事件
+  async handleBrowserStartup() {
+    try {
+      console.log('🔄 Firefox处理浏览器启动...')
+
+      // 检查是否启用启动时同步
+      const settings = await this.extensionAPI.storage.sync.get(['syncOnStartup', 'token'])
+
+      if (!settings.token) {
+        console.log('⚠️ Firefox未登录，跳过启动时同步')
+        return
+      }
+
+      if (!settings.syncOnStartup) {
+        console.log('⚠️ Firefox启动时同步已关闭')
+        return
+      }
+
+      // 检查是否正在导入数据
+      const { isImporting } = await this.extensionAPI.storage.sync.get(['isImporting'])
+      if (isImporting) {
+        console.log('🚫 Firefox正在导入数据，跳过启动时同步')
+        return
+      }
+
+      console.log('✅ Firefox启动时自动同步已触发')
+
+      // 延迟执行，确保浏览器完全启动
+      setTimeout(async () => {
+        await this.startWebSocketConnection()
+
+        // 再延迟一下，等待WebSocket连接建立
+        setTimeout(() => {
+          this.performFullSync()
+        }, 3000)
+      }, 2000)
+
+    } catch (error) {
+      console.error('❌ Firefox处理浏览器启动失败:', error)
+    }
+  }
+
   // 启动WebSocket连接
   async startWebSocketConnection() {
     try {
@@ -169,6 +219,7 @@ class ExtensionBackgroundFirefox {
       const defaultSettings = {
         workMode: 'cooperative',
         serverUrl: 'http://localhost:3001',
+        syncOnStartup: false,  // 浏览器启动时自动同步
         autoBookmarkSave: false,
         overrideBookmarkShortcut: false,
         confirmBookmarkSave: true,
@@ -193,11 +244,17 @@ class ExtensionBackgroundFirefox {
         console.log('✅ Firefox用户已登录，启动WebSocket连接')
         this.startWebSocketConnection()
         
-        // 执行全量同步
-        console.log('🔄 Firefox开始执行全量同步...')
-        setTimeout(() => {
-          this.performFullSync()
-        }, 3000) // 延迟3秒执行
+        // 检查是否正在导入数据，如果是则跳过全量同步
+        const { isImporting } = await this.extensionAPI.storage.sync.get(['isImporting'])
+        if (isImporting) {
+          console.log('🚫 Firefox检测到正在导入数据，跳过自动全量同步')
+        } else {
+          // 执行全量同步
+          console.log('🔄 Firefox开始执行全量同步...')
+          setTimeout(() => {
+            this.performFullSync()
+          }, 3000) // 延迟3秒执行
+        }
       } else {
         console.log('⚠️ Firefox用户未登录，跳过WebSocket连接和全量同步')
       }
@@ -318,8 +375,15 @@ class ExtensionBackgroundFirefox {
         return syncFolderId
       }
       
+      // 规范化路径：处理重复的"同步收藏夹"前缀
+      // 例如 "同步收藏夹 > 同步收藏夹 > 编程语言" 变为 "同步收藏夹 > 编程语言"
+      let normalizedPath = folderPath
+      while (normalizedPath.startsWith('同步收藏夹 > 同步收藏夹')) {
+        normalizedPath = normalizedPath.replace('同步收藏夹 > 同步收藏夹', '同步收藏夹')
+      }
+      
       // 解析文件夹路径 "同步收藏夹 > 个人资料 > 工作"
-      const pathParts = folderPath.split(' > ').slice(1) // 移除"同步收藏夹"部分
+      const pathParts = normalizedPath.split(' > ').slice(1) // 移除"同步收藏夹"部分
       
       let currentFolderId = syncFolderId
       
@@ -393,6 +457,7 @@ class ExtensionBackgroundFirefox {
         workMode: 'cooperative',
         serverUrl: 'http://localhost:3001',
         apiTimeout: 10,
+        syncOnStartup: false,  // 浏览器启动时自动同步
         autoBookmarkSave: false,
         overrideBookmarkShortcut: false,
         confirmBookmarkSave: true,
@@ -760,6 +825,12 @@ class ExtensionBackgroundFirefox {
     try {
       console.log('📚 Firefox书签创建:', bookmark.title)
 
+      // 检查是否为文件夹类型（没有URL的书签项）
+      if (!bookmark.url) {
+        console.log('📁 Firefox检测到文件夹创建，跳过同步:', bookmark.title)
+        return
+      }
+
       // 检查书签是否保存在"同步收藏夹"或其子文件夹中
       const isInSyncFolder = await this.checkBookmarkInSyncFolder(id)
       if (!isInSyncFolder) {
@@ -821,6 +892,22 @@ class ExtensionBackgroundFirefox {
         return
       }
 
+      // 如果是文件夹，需要遍历删除其中的所有书签
+      if (!removeInfo.node?.url && removeInfo.node?.children) {
+        console.log('📁 Firefox删除的是文件夹，遍历删除其中的书签...')
+        const bookmarksToDelete = this.getAllBookmarksFromNode(removeInfo.node)
+        console.log(`🗑️ Firefox文件夹中包含 ${bookmarksToDelete.length} 个书签`)
+        
+        for (const bookmark of bookmarksToDelete) {
+          if (bookmark.url) {
+            await this.deleteBookmarkFromServer(bookmark.url)
+            console.log('🗑️ Firefox已从服务器删除书签:', bookmark.title)
+          }
+        }
+        this.showNotification(`文件夹"${removeInfo.node.title}"中的 ${bookmarksToDelete.length} 个书签已从服务器删除`, 'success')
+        return
+      }
+
       // 如果有URL，尝试从服务器删除
       if (removeInfo.node?.url) {
         await this.deleteBookmarkFromServer(removeInfo.node.url)
@@ -832,6 +919,20 @@ class ExtensionBackgroundFirefox {
       console.error('❌ Firefox书签删除同步失败:', error)
       this.showNotification('Firefox书签删除同步失败: ' + error.message, 'error')
     }
+  }
+
+  // 从节点递归获取所有书签（用于文件夹删除时）
+  getAllBookmarksFromNode(node) {
+    const bookmarks = []
+    if (node.url) {
+      bookmarks.push(node)
+    }
+    if (node.children && node.children.length > 0) {
+      for (const child of node.children) {
+        bookmarks.push(...this.getAllBookmarksFromNode(child))
+      }
+    }
+    return bookmarks
   }
 
   // 书签移动事件处理 - Firefox版本
@@ -1103,6 +1204,21 @@ class ExtensionBackgroundFirefox {
   // 保存书签到服务器 - Firefox版本
   async saveBookmark(data, tab, isUpdate = false) {
     try {
+      // 校验书签数据
+      if (!data.url || !data.url.trim()) {
+        console.log('⚠️ Firefox书签URL为空，跳过保存:', data.title)
+        throw new Error('书签URL不能为空')
+      }
+      
+      // 确保标题不为空
+      if (!data.title || !data.title.trim()) {
+        data.title = 'Untitled'
+      }
+      
+      // 清理数据
+      data.url = data.url.trim()
+      data.title = data.title.trim()
+
       const settings = await this.extensionAPI.storage.sync.get(['token', 'serverUrl'])
       
       if (!settings.token) {

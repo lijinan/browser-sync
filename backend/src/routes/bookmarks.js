@@ -13,7 +13,8 @@ router.use(authenticateToken);
 // 书签验证schema
 const bookmarkSchema = Joi.object({
   title: Joi.string().required(),
-  url: Joi.string().uri().required(),
+  // 放宽URL验证，允许各种浏览器支持的URL格式（javascript:, data:, about:等）
+  url: Joi.string().min(1).required(),
   folder: Joi.string().allow('').optional(),
   tags: Joi.array().items(Joi.string()).optional(),
   description: Joi.string().allow('').optional()

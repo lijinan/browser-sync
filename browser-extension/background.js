@@ -14,6 +14,14 @@ class ExtensionBackground {
   }
 
   init() {
+    // 监听浏览器启动事件
+    if (chrome.runtime.onStartup) {
+      chrome.runtime.onStartup.addListener(() => {
+        console.log('🚀 浏览器启动事件触发')
+        this.handleBrowserStartup()
+      })
+    }
+
     // 安装时初始化
     chrome.runtime.onInstalled.addListener(() => {
       this.createContextMenus()
@@ -103,6 +111,48 @@ class ExtensionBackground {
       }
     } catch (error) {
       console.error('❌ WebSocket管理器初始化失败:', error)
+    }
+  }
+
+  // 处理浏览器启动事件
+  async handleBrowserStartup() {
+    try {
+      console.log('🔄 处理浏览器启动...')
+
+      // 检查是否启用启动时同步
+      const settings = await chrome.storage.sync.get(['syncOnStartup', 'token'])
+
+      if (!settings.token) {
+        console.log('⚠️ 未登录，跳过启动时同步')
+        return
+      }
+
+      if (!settings.syncOnStartup) {
+        console.log('⚠️ 启动时同步已关闭')
+        return
+      }
+
+      // 检查是否正在导入数据
+      const { isImporting } = await chrome.storage.sync.get(['isImporting'])
+      if (isImporting) {
+        console.log('🚫 正在导入数据，跳过启动时同步')
+        return
+      }
+
+      console.log('✅ 启动时自动同步已触发')
+
+      // 延迟执行，确保浏览器完全启动
+      setTimeout(async () => {
+        await this.startWebSocketConnection()
+
+        // 再延迟一下，等待WebSocket连接建立
+        setTimeout(() => {
+          this.performFullSync()
+        }, 3000)
+      }, 2000)
+
+    } catch (error) {
+      console.error('❌ 处理浏览器启动失败:', error)
     }
   }
 
@@ -290,8 +340,15 @@ class ExtensionBackground {
         return syncFolderId
       }
       
+      // 规范化路径：处理重复的"同步收藏夹"前缀
+      // 例如 "同步收藏夹 > 同步收藏夹 > 编程语言" 变为 "同步收藏夹 > 编程语言"
+      let normalizedPath = folderPath
+      while (normalizedPath.startsWith('同步收藏夹 > 同步收藏夹')) {
+        normalizedPath = normalizedPath.replace('同步收藏夹 > 同步收藏夹', '同步收藏夹')
+      }
+      
       // 解析文件夹路径 "同步收藏夹 > 个人资料 > 工作"
-      const pathParts = folderPath.split(' > ').slice(1) // 移除"同步收藏夹"部分
+      const pathParts = normalizedPath.split(' > ').slice(1) // 移除"同步收藏夹"部分
       
       let currentFolderId = syncFolderId
       
@@ -326,12 +383,8 @@ class ExtensionBackground {
   async loadSettings() {
     try {
       const defaultSettings = {
-        workMode: 'cooperative',
         serverUrl: 'http://localhost:3001',
-        autoBookmarkSave: false,
-        overrideBookmarkShortcut: false,
-        confirmBookmarkSave: true,
-        autoBookmarkCategory: false,
+        syncOnStartup: false,  // 浏览器启动时自动同步
         autoPasswordDetect: true,
         interceptPasswordSave: false,
         autoPasswordFill: false,
@@ -352,11 +405,17 @@ class ExtensionBackground {
         console.log('✅ 用户已登录，启动WebSocket连接')
         this.startWebSocketConnection()
         
-        // 执行全量同步
-        console.log('🔄 开始执行全量同步...')
-        setTimeout(() => {
-          this.performFullSync()
-        }, 3000) // 延迟3秒执行，确保WebSocket连接已建立
+        // 检查是否正在导入数据，如果是则跳过全量同步
+        const { isImporting } = await chrome.storage.sync.get(['isImporting'])
+        if (isImporting) {
+          console.log('🚫 检测到正在导入数据，跳过自动全量同步')
+        } else {
+          // 执行全量同步
+          console.log('🔄 开始执行全量同步...')
+          setTimeout(() => {
+            this.performFullSync()
+          }, 3000) // 延迟3秒执行，确保WebSocket连接已建立
+        }
       } else {
         console.log('⚠️ 用户未登录，跳过WebSocket连接和全量同步')
       }
@@ -396,20 +455,14 @@ class ExtensionBackground {
 
   async setDefaultSettings() {
     const defaultSettings = {
-      workMode: 'cooperative',
       serverUrl: 'http://localhost:3001',
       apiTimeout: 10,
-      autoBookmarkSave: false,
-      overrideBookmarkShortcut: false,
-      confirmBookmarkSave: true,
-      autoBookmarkCategory: false,
+      syncOnStartup: false,  // 浏览器启动时自动同步
       autoPasswordDetect: true,
       interceptPasswordSave: false,
       autoPasswordFill: false,
       confirmPasswordSave: true,
-      debugMode: false,
-      backupReminder: true,
-      usageStats: false
+      debugMode: false
     }
 
     const existing = await chrome.storage.sync.get()
@@ -572,6 +625,12 @@ class ExtensionBackground {
     try {
       if (this.settings.debugMode) {
         console.log('书签创建事件:', { id, bookmark })
+      }
+
+      // 检查是否为文件夹类型（没有URL的书签项）
+      if (!bookmark.url) {
+        console.log('📁 检测到文件夹创建，跳过同步:', bookmark.title)
+        return
       }
 
       // 检查书签是否保存在"同步收藏夹"或其子文件夹中
@@ -739,9 +798,50 @@ class ExtensionBackground {
         return
       }
 
+      // 检查是否是文件夹（没有URL但有children）
+      if (!removeInfo.node.url && removeInfo.node.children) {
+        console.log('📁 删除的是文件夹，检查是否在同步收藏夹中...')
+        
+        // 检查文件夹是否在同步收藏夹中
+        let wasInSyncFolder = false
+        if (removeInfo.parentId) {
+          wasInSyncFolder = await this.checkParentIsSyncFolder(removeInfo.parentId)
+        }
+        if (!wasInSyncFolder) {
+          wasInSyncFolder = await this.checkBookmarkInSyncFolderByNode(removeInfo.node)
+        }
+        
+        if (!wasInSyncFolder) {
+          console.log('📁 文件夹不在同步收藏夹中，跳过同步')
+          return
+        }
+        
+        console.log('✅ 检测到同步收藏夹中的文件夹被删除:', removeInfo.node.title)
+        
+        // 检查登录状态
+        const settings = await chrome.storage.sync.get(['token', 'serverUrl'])
+        if (!settings.token) {
+          console.log('❌ 未登录，跳过删除同步')
+          return
+        }
+        
+        // 遍历删除文件夹中的所有书签
+        const bookmarksToDelete = this.getAllBookmarksFromNode(removeInfo.node)
+        console.log(`🗑️ 文件夹中包含 ${bookmarksToDelete.length} 个书签，开始从服务器删除...`)
+        
+        for (const bookmark of bookmarksToDelete) {
+          if (bookmark.url) {
+            await this.deleteBookmarkFromServer(bookmark.url)
+            console.log('🗑️ 已从服务器删除书签:', bookmark.title)
+          }
+        }
+        this.showNotification(`文件夹"${removeInfo.node.title}"中的 ${bookmarksToDelete.length} 个书签已从服务器删除`, 'success')
+        return
+      }
+
       // 检查是否是书签（有URL）
       if (!removeInfo.node.url) {
-        console.log('⚠️ 删除的不是书签（可能是文件夹），跳过同步')
+        console.log('⚠️ 删除的不是书签也不是文件夹，跳过同步')
         return
       }
 
@@ -1017,6 +1117,20 @@ class ExtensionBackground {
     }
   }
 
+  // 从节点递归获取所有书签（用于文件夹删除时）
+  getAllBookmarksFromNode(node) {
+    const bookmarks = []
+    if (node.url) {
+      bookmarks.push(node)
+    }
+    if (node.children && node.children.length > 0) {
+      for (const child of node.children) {
+        bookmarks.push(...this.getAllBookmarksFromNode(child))
+      }
+    }
+    return bookmarks
+  }
+
   // 更新服务器上的书签
   async updateBookmarkOnServer(url, bookmarkData) {
     try {
@@ -1129,6 +1243,21 @@ class ExtensionBackground {
   }
 
   async saveBookmark(data, tab, isUpdate = false) {
+    // 校验书签数据
+    if (!data.url || !data.url.trim()) {
+      console.log('⚠️ 书签URL为空，跳过保存:', data.title)
+      throw new Error('书签URL不能为空')
+    }
+    
+    // 确保标题不为空
+    if (!data.title || !data.title.trim()) {
+      data.title = 'Untitled'
+    }
+    
+    // 清理数据
+    data.url = data.url.trim()
+    data.title = data.title.trim()
+
     const settings = await chrome.storage.sync.get(['token', 'serverUrl'])
     
     if (!settings.token) {

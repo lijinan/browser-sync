@@ -160,6 +160,10 @@ class ExtensionPopup {
         })
 
         this.showMessage('登录成功！', 'success')
+        
+        // 登录成功后，检查并创建"同步收藏夹"
+        await this.ensureSyncFolder()
+        
         await this.checkConnection()
       } else {
         throw new Error(data.message || '登录失败')
@@ -236,6 +240,89 @@ class ExtensionPopup {
     extensionAPI.runtime.openOptionsPage()
   }
 
+  // 确保"同步收藏夹"存在
+  async ensureSyncFolder() {
+    try {
+      // 检查浏览器是否支持书签API
+      if (!extensionAPI.bookmarks) {
+        console.log('⚠️ 浏览器不支持书签API，跳过创建同步收藏夹')
+        return
+      }
+
+      console.log('📁 检查"同步收藏夹"...')
+
+      // 搜索是否已存在"同步收藏夹"文件夹
+      const searchResults = await extensionAPI.bookmarks.search({
+        title: '同步收藏夹'
+      })
+
+      // 过滤出文件夹类型（没有url属性的节点）
+      const existingFolders = searchResults.filter(node => !node.url)
+
+      if (existingFolders.length > 0) {
+        console.log('✅ "同步收藏夹"已存在，ID:', existingFolders[0].id)
+        return existingFolders[0]
+      }
+
+      // 获取书签工具栏ID
+      const toolbarId = await this.getBookmarksMenuRoot()
+      if (!toolbarId) {
+        console.error('❌ 无法获取书签工具栏ID')
+        return null
+      }
+
+      // 创建"同步收藏夹"文件夹
+      const syncFolder = await extensionAPI.bookmarks.create({
+        title: '同步收藏夹',
+        parentId: toolbarId
+      })
+
+      console.log('✅ 已创建"同步收藏夹"，ID:', syncFolder.id)
+      return syncFolder
+
+    } catch (error) {
+      console.error('❌ 创建同步收藏夹失败:', error)
+      return null
+    }
+  }
+
+  // 获取书签工具栏ID（支持 Firefox 和 Chrome）
+  async getBookmarksMenuRoot() {
+    try {
+      const tree = await extensionAPI.bookmarks.getTree()
+
+      if (tree[0] && tree[0].children && tree[0].children.length > 0) {
+        // 查找书签工具栏
+        let toolbarNode = tree[0].children.find(child =>
+          child.id === 'toolbar_____' || // Firefox
+          child.id === '1' || child.id === 1 // Chrome
+        )
+
+        if (toolbarNode) {
+          return toolbarNode.id
+        }
+
+        // 如果找不到工具栏，尝试找书签菜单（回退方案）
+        let menuNode = tree[0].children.find(child =>
+          child.id === 'menu________' || // Firefox
+          child.id === '0' || child.id === 0 // Chrome
+        )
+
+        if (menuNode) {
+          return menuNode.id
+        }
+
+        // 最后的回退：使用第一个子节点
+        return tree[0].children[0].id
+      }
+
+      return null
+    } catch (error) {
+      console.error('查找书签根目录失败:', error)
+      return null
+    }
+  }
+
   async sync() {
     try {
       const syncBtn = document.getElementById('syncBtn')
@@ -244,26 +331,13 @@ class ExtensionPopup {
       syncBtn.innerHTML = '<span class="loading"></span> 同步中...'
       syncBtn.disabled = true
 
-      // 获取当前工作模式
-      const settings = await extensionAPI.storage.sync.get(['workMode', 'token', 'serverUrl'])
+      const settings = await extensionAPI.storage.sync.get(['token', 'serverUrl'])
       
       if (!settings.token) {
         throw new Error('请先登录')
       }
 
-      // 根据工作模式执行不同的同步逻辑
-      switch (settings.workMode) {
-        case 'replace':
-          await this.syncReplaceMode(settings)
-          break
-        case 'smart':
-          await this.syncSmartMode(settings)
-          break
-        case 'cooperative':
-        default:
-          await this.syncCooperativeMode(settings)
-          break
-      }
+      await this.syncReplaceMode(settings)
       
       this.showMessage('同步完成！', 'success')
     } catch (error) {
@@ -284,7 +358,7 @@ class ExtensionPopup {
     }
   }
 
-  // 替换模式同步：完全接管浏览器书签
+  // 替换模式同步：将服务器书签同步到"同步收藏夹"
   async syncReplaceMode(settings) {
     console.log('🎯 执行替换模式同步')
     
@@ -292,65 +366,26 @@ class ExtensionPopup {
     const serverBookmarks = await this.fetchServerBookmarks(settings)
     console.log('📚 获取到服务器书签:', serverBookmarks.length, '个')
     
+    if (serverBookmarks.length === 0) {
+      console.log('⚠️ 服务器上没有书签')
+      return
+    }
+    
     // 2. 检查浏览器是否支持书签API
     if (extensionAPI.bookmarks) {
-      // 3. 获取浏览器本地书签
-      const localBookmarks = await this.fetchLocalBookmarks()
-      console.log('🔖 获取到本地书签:', localBookmarks.length, '个')
+      // 3. 清空"同步收藏夹"中的现有书签
+      await this.clearSyncFolderBookmarks()
+      console.log('🗑️ 已清空同步收藏夹中的书签')
       
-      // 4. 清空浏览器书签（替换模式）
-      await this.clearLocalBookmarks()
-      console.log('🗑️ 已清空本地书签')
-      
-      // 5. 将服务器书签同步到浏览器
+      // 4. 将服务器书签同步到浏览器"同步收藏夹"
       await this.syncBookmarksToLocal(serverBookmarks)
       console.log('⬇️ 已同步服务器书签到本地')
     } else {
       console.log('⚠️ 浏览器不支持书签API，跳过本地书签同步')
     }
     
-    // 6. 通知用户
-    this.showMessage(`替换模式同步完成！同步了 ${serverBookmarks.length} 个书签`, 'success')
-  }
-
-  // 智能模式同步：双向同步
-  async syncSmartMode(settings) {
-    console.log('🧠 执行智能模式同步')
-    
-    const serverBookmarks = await this.fetchServerBookmarks(settings)
-    
-    if (extensionAPI.bookmarks) {
-      const localBookmarks = await this.fetchLocalBookmarks()
-      
-      // 智能合并：本地新增的上传到服务器，服务器新增的下载到本地
-      const newLocalBookmarks = this.findNewBookmarks(localBookmarks, serverBookmarks)
-      const newServerBookmarks = this.findNewBookmarks(serverBookmarks, localBookmarks)
-      
-      // 上传新的本地书签
-      for (const bookmark of newLocalBookmarks) {
-        await this.uploadBookmark(bookmark, settings)
-      }
-      
-      // 下载新的服务器书签
-      for (const bookmark of newServerBookmarks) {
-        await this.createLocalBookmark(bookmark)
-      }
-      
-      console.log(`📤 上传了 ${newLocalBookmarks.length} 个本地书签`)
-      console.log(`📥 下载了 ${newServerBookmarks.length} 个服务器书签`)
-    }
-    
-    this.showMessage(`智能同步完成！处理了 ${serverBookmarks.length} 个书签`, 'success')
-  }
-
-  // 协作模式同步：仅同步扩展数据
-  async syncCooperativeMode(settings) {
-    console.log('🤝 执行协作模式同步')
-    
-    const serverBookmarks = await this.fetchServerBookmarks(settings)
-    console.log('📚 同步了扩展书签数据:', serverBookmarks.length, '个')
-    
-    this.showMessage(`协作模式同步完成！同步了 ${serverBookmarks.length} 个扩展书签`, 'success')
+    // 5. 通知用户
+    this.showMessage(`同步完成！同步了 ${serverBookmarks.length} 个书签到"同步收藏夹"`, 'success')
   }
 
   // 获取服务器书签
@@ -369,36 +404,45 @@ class ExtensionPopup {
     return data.bookmarks || []
   }
 
-  // 获取本地书签
-  async fetchLocalBookmarks() {
-    if (!extensionAPI.bookmarks) {
-      return []
-    }
-    
-    try {
-      const bookmarks = await extensionAPI.bookmarks.search({})
-      return bookmarks.filter(b => b.url) // 只返回有URL的书签
-    } catch (error) {
-      console.error('获取本地书签失败:', error)
-      return []
-    }
-  }
-
-  // 清空本地书签
-  async clearLocalBookmarks() {
+  // 清空"同步收藏夹"中的书签
+  async clearSyncFolderBookmarks() {
     if (!extensionAPI.bookmarks) {
       return
     }
     
     try {
-      const bookmarks = await extensionAPI.bookmarks.search({})
-      for (const bookmark of bookmarks) {
-        if (bookmark.url) { // 只删除书签，不删除文件夹
-          await extensionAPI.bookmarks.remove(bookmark.id)
+      // 搜索"同步收藏夹"文件夹
+      const searchResults = await extensionAPI.bookmarks.search({ title: '同步收藏夹' })
+      const syncFolders = searchResults.filter(node => !node.url)
+      
+      if (syncFolders.length === 0) {
+        console.log('⚠️ 未找到"同步收藏夹"文件夹')
+        return
+      }
+      
+      // 递归删除同步收藏夹中的所有书签（保留文件夹结构）
+      const clearBookmarksRecursive = async (folderId) => {
+        const children = await extensionAPI.bookmarks.getChildren(folderId)
+        
+        for (const node of children) {
+          if (node.url) {
+            // 这是一个书签，删除它
+            await extensionAPI.bookmarks.remove(node.id)
+          } else if (node.children) {
+            // 这是一个文件夹，递归处理
+            await clearBookmarksRecursive(node.id)
+          }
         }
       }
+      
+      // 清空每个同步收藏夹
+      for (const syncFolder of syncFolders) {
+        await clearBookmarksRecursive(syncFolder.id)
+      }
+      
+      console.log('✅ 已清空"同步收藏夹"中的书签')
     } catch (error) {
-      console.error('清空本地书签失败:', error)
+      console.error('清空同步收藏夹书签失败:', error)
     }
   }
 
@@ -475,13 +519,20 @@ class ExtensionPopup {
 
       // 步骤2：处理书签的folder路径
       if (bookmark.folder) {
-        if (bookmark.folder === '同步收藏夹' || bookmark.folder === '') {
+        // 规范化路径：处理重复的"同步收藏夹"前缀
+        // 例如 "同步收藏夹 > 同步收藏夹 > 编程语言" 变为 "同步收藏夹 > 编程语言"
+        let normalizedFolder = bookmark.folder
+        while (normalizedFolder.startsWith('同步收藏夹 > 同步收藏夹')) {
+          normalizedFolder = normalizedFolder.replace('同步收藏夹 > 同步收藏夹', '同步收藏夹')
+        }
+        
+        if (normalizedFolder === '同步收藏夹' || normalizedFolder === '') {
           // 直接放在"同步收藏夹"根文件夹下
           parentId = folderMap.get(syncRootPath)
           console.log('书签放在"同步收藏夹"根文件夹下, ID:', parentId)
-        } else if (bookmark.folder.startsWith('同步收藏夹 > ')) {
+        } else if (normalizedFolder.startsWith('同步收藏夹 > ')) {
           // 处理"同步收藏夹 > 子文件夹1 > 子文件夹2"的情况
-          const remainingPath = bookmark.folder.replace('同步收藏夹 > ', '')
+          const remainingPath = normalizedFolder.replace('同步收藏夹 > ', '')
           const folderPath = remainingPath.split(' > ').filter(f => f.trim())
 
           // 从"同步收藏夹"根文件夹开始
@@ -491,18 +542,22 @@ class ExtensionPopup {
           // 逐级创建子文件夹
           let currentPath = syncRootPath
           for (const folderName of folderPath) {
+            // 跳过空文件夹名
+            if (!folderName || !folderName.trim()) {
+              console.log('⚠️ 跳过空文件夹名')
+              continue
+            }
+            
             currentPath = currentPath ? `${currentPath} > ${folderName}` : folderName
 
             if (!folderMap.has(currentPath)) {
-              const searchResults = await extensionAPI.bookmarks.search({
-                title: folderName
-              })
+              // 获取当前父文件夹的直接子项，而不是搜索整个浏览器
+              const children = await extensionAPI.bookmarks.getChildren(parentId)
 
-              // 在当前父文件夹下查找（使用宽松比较）
-              let folderNode = searchResults.find(node =>
+              // 在直接子项中查找同名文件夹
+              let folderNode = children.find(node =>
                 node.title === folderName &&
-                !node.url &&
-                String(node.parentId) === String(parentId)
+                !node.url  // 是文件夹
               )
 
               if (!folderNode) {
@@ -530,17 +585,22 @@ class ExtensionPopup {
           let currentPath = syncRootPath
 
           for (const folderName of folderPath) {
+            // 跳过空文件夹名
+            if (!folderName || !folderName.trim()) {
+              console.log('⚠️ 跳过空文件夹名')
+              continue
+            }
+            
             currentPath = currentPath ? `${currentPath} > ${folderName}` : folderName
 
             if (!folderMap.has(currentPath)) {
-              const searchResults = await extensionAPI.bookmarks.search({
-                title: folderName
-              })
+              // 获取当前父文件夹的直接子项，而不是搜索整个浏览器
+              const children = await extensionAPI.bookmarks.getChildren(parentId)
 
-              let folderNode = searchResults.find(node =>
+              // 在直接子项中查找同名文件夹
+              let folderNode = children.find(node =>
                 node.title === folderName &&
-                !node.url &&
-                String(node.parentId) === String(parentId)
+                !node.url  // 是文件夹
               )
 
               if (!folderNode) {
@@ -549,6 +609,8 @@ class ExtensionPopup {
                   parentId: parentId
                 })
                 console.log('创建文件夹:', folderName, 'ID:', folderNode.id, 'parentId:', parentId)
+              } else {
+                console.log('找到已存在的文件夹:', folderName, 'ID:', folderNode.id)
               }
 
               folderMap.set(currentPath, folderNode.id)
@@ -744,6 +806,10 @@ class ExtensionPopup {
 
       console.log('🔄 开始导入浏览器数据')
       
+      // 设置导入标志，防止触发自动全量同步
+      await extensionAPI.storage.sync.set({ isImporting: true })
+      console.log('🚫 已设置导入标志，暂停自动同步')
+      
       // 1. 获取浏览器书签
       const browserBookmarks = await this.getAllBrowserBookmarks()
       console.log('📚 获取到浏览器书签:', browserBookmarks.length, '个')
@@ -752,9 +818,9 @@ class ExtensionPopup {
       const browserPasswords = await this.getAllBrowserPasswords()
       console.log('🔐 获取到浏览器密码:', browserPasswords.length, '个')
       
-      // 3. 清空服务器数据
-      await this.clearServerData(settings)
-      console.log('🗑️ 已清空服务器数据')
+      // 3. 清空服务器书签（保留密码）
+      await this.clearServerData(settings, { clearBookmarks: true, clearPasswords: false })
+      console.log('🗑️ 已清空服务器书签（密码保留）')
       
       // 4. 上传书签到服务器
       let uploadedBookmarks = 0
@@ -789,6 +855,10 @@ class ExtensionPopup {
       console.error('导入浏览器数据失败:', error)
       this.showMessage('导入失败: ' + error.message, 'error')
     } finally {
+      // 清除导入标志，恢复自动同步
+      await extensionAPI.storage.sync.set({ isImporting: false })
+      console.log('✅ 已清除导入标志，恢复自动同步')
+      
       const importBtn = document.getElementById('importBrowserDataBtn')
       importBtn.innerHTML = `
         <svg class="action-icon" viewBox="0 0 24 24" fill="currentColor">
@@ -803,7 +873,7 @@ class ExtensionPopup {
     }
   }
 
-  // 获取所有浏览器书签（支持多级文件夹，根目录为"同步收藏夹"）
+  // 获取所有浏览器书签（仅获取"同步收藏夹"下的书签）
   async getAllBrowserBookmarks() {
     if (!extensionAPI.bookmarks) {
       console.log('⚠️ 浏览器不支持书签API')
@@ -811,25 +881,31 @@ class ExtensionPopup {
     }
 
     try {
-      // 获取书签树
-      const bookmarkTree = await extensionAPI.bookmarks.getTree()
+      // 搜索"同步收藏夹"文件夹
+      const searchResults = await extensionAPI.bookmarks.search({ title: '同步收藏夹' })
+      // 过滤出文件夹类型（没有url属性的节点）
+      const syncFolders = searchResults.filter(node => !node.url)
+
+      if (syncFolders.length === 0) {
+        console.log('⚠️ 未找到"同步收藏夹"文件夹')
+        return []
+      }
+
       const bookmarks = []
 
-      // 需要过滤的浏览器默认文件夹名称
-      const ignoredFolders = new Set([
-        '书签菜单', 'Bookmarks Menu',
-        '书签工具栏', 'Bookmarks Bar', 'Favorites Bar',
-        '其他书签', 'Other Bookmarks',
-        'Mobile Bookmarks',
-        '未命名文件夹', 'Untitled',
-        '收藏夹栏', 'Favorites Bar'
-      ])
+      // 递归遍历"同步收藏夹"下的书签
+      const traverseBookmarks = async (folderId, folderPath = []) => {
+        const children = await extensionAPI.bookmarks.getChildren(folderId)
 
-      // 递归遍历书签树，保留完整文件夹路径
-      const traverseBookmarks = (nodes, folderPath = []) => {
-        for (const node of nodes) {
+        for (const node of children) {
           if (node.url) {
             // 这是一个书签
+            // 跳过URL为空或无效的书签
+            if (!node.url.trim()) {
+              console.log('⚠️ 跳过空URL书签:', node.title)
+              continue
+            }
+
             // 使用 > 作为多级文件夹的分隔符
             // 根目录固定为"同步收藏夹"
             const folder = folderPath.length > 0
@@ -838,7 +914,7 @@ class ExtensionPopup {
 
             bookmarks.push({
               title: node.title || 'Untitled',
-              url: node.url,
+              url: node.url.trim(),
               folder: folder,
               tags: ['浏览器导入'],
               description: `导入时间: ${node.dateAdded ? new Date(node.dateAdded).toLocaleString() : new Date().toLocaleString()}`
@@ -846,20 +922,18 @@ class ExtensionPopup {
           } else if (node.children) {
             // 这是一个文件夹，递归遍历
             const folderName = node.title || '未命名文件夹'
-
-            // 跳过浏览器默认的根级文件夹
-            if (ignoredFolders.has(folderName)) {
-              // 继续遍历子节点，但不添加到路径
-              traverseBookmarks(node.children, folderPath)
-            } else {
-              // 添加到路径并递归
-              traverseBookmarks(node.children, [...folderPath, folderName])
-            }
+            await traverseBookmarks(node.id, [...folderPath, folderName])
           }
         }
       }
 
-      traverseBookmarks(bookmarkTree)
+      // 只遍历"同步收藏夹"下的内容
+      for (const syncFolder of syncFolders) {
+        console.log('📁 正在导入"同步收藏夹":', syncFolder.id)
+        await traverseBookmarks(syncFolder.id)
+      }
+
+      console.log(`✅ 从"同步收藏夹"导入 ${bookmarks.length} 个书签`)
       return bookmarks
 
     } catch (error) {
@@ -877,30 +951,34 @@ class ExtensionPopup {
   }
 
   // 清空服务器数据
-  async clearServerData(settings) {
+  async clearServerData(settings, options = { clearBookmarks: true, clearPasswords: false }) {
     try {
       // 清空书签
-      const bookmarksResponse = await fetch(`${settings.serverUrl}/bookmarks/clear`, {
-        method: 'DELETE',
-        headers: {
-          'Authorization': `Bearer ${settings.token}`
+      if (options.clearBookmarks) {
+        const bookmarksResponse = await fetch(`${settings.serverUrl}/bookmarks/clear`, {
+          method: 'DELETE',
+          headers: {
+            'Authorization': `Bearer ${settings.token}`
+          }
+        })
+        
+        if (!bookmarksResponse.ok) {
+          console.error('清空服务器书签失败')
         }
-      })
-      
-      if (!bookmarksResponse.ok) {
-        console.error('清空服务器书签失败')
       }
       
-      // 清空密码
-      const passwordsResponse = await fetch(`${settings.serverUrl}/passwords/clear`, {
-        method: 'DELETE',
-        headers: {
-          'Authorization': `Bearer ${settings.token}`
+      // 清空密码（仅在明确指定时）
+      if (options.clearPasswords) {
+        const passwordsResponse = await fetch(`${settings.serverUrl}/passwords/clear`, {
+          method: 'DELETE',
+          headers: {
+            'Authorization': `Bearer ${settings.token}`
+          }
+        })
+        
+        if (!passwordsResponse.ok) {
+          console.error('清空服务器密码失败')
         }
-      })
-      
-      if (!passwordsResponse.ok) {
-        console.error('清空服务器密码失败')
       }
       
     } catch (error) {
@@ -911,13 +989,25 @@ class ExtensionPopup {
 
   // 上传书签到服务器
   async uploadBookmarkToServer(bookmark, settings) {
+    // 验证书签数据
+    if (!bookmark.url || !bookmark.url.trim()) {
+      throw new Error('书签URL不能为空')
+    }
+    if (!bookmark.title || !bookmark.title.trim()) {
+      throw new Error('书签标题不能为空')
+    }
+    
     const response = await fetch(`${settings.serverUrl}/bookmarks`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${settings.token}`
       },
-      body: JSON.stringify(bookmark)
+      body: JSON.stringify({
+        ...bookmark,
+        url: bookmark.url.trim(),
+        title: bookmark.title.trim() || 'Untitled'
+      })
     })
     
     if (!response.ok) {
@@ -951,7 +1041,6 @@ class ExtensionPopup {
   async exportToBrowser() {
     try {
       const exportBtn = document.getElementById('exportToBrowserBtn')
-      const originalText = exportBtn.innerHTML
 
       // 检查浏览器是否支持书签API
       if (!extensionAPI.bookmarks) {
@@ -965,103 +1054,42 @@ class ExtensionPopup {
         throw new Error('请先登录')
       }
 
-      // 选择导出模式
-      const mode = confirm(
-        '📤 导出模式选择：\n\n' +
-        '点击「确定」：覆盖模式 - 清空浏览器书签后导入\n' +
-        '点击「取消」：合并模式 - 保留现有书签，仅添加新书签\n\n' +
-        '建议：首次导出使用覆盖模式，后续使用合并模式'
+      // 导出到浏览器：仅操作"同步收藏夹"
+      const confirmed = confirm(
+        '📤 导出到浏览器"同步收藏夹"\n\n' +
+        '此操作将清空"同步收藏夹"中的现有书签，\n' +
+        '然后从服务器同步最新的书签到浏览器。\n\n' +
+        '确定要继续吗？'
       )
 
-      const exportMode = mode ? 'replace' : 'merge'
-
-      // 二次确认覆盖模式
-      if (exportMode === 'replace') {
-        const confirmed = confirm(
-          '⚠️ 警告：覆盖模式将删除浏览器中的所有现有书签！\n\n' +
-          '此操作不可撤销！确定要继续吗？'
-        )
-        if (!confirmed) {
-          return
-        }
+      if (!confirmed) {
+        return
       }
 
       exportBtn.innerHTML = '<span class="loading"></span> 导出中...'
       exportBtn.disabled = true
 
-      console.log('🔄 开始导出数据到浏览器')
-      console.log('📋 导出模式:', exportMode === 'replace' ? '覆盖模式' : '合并模式')
+      console.log('🔄 开始导出数据到浏览器"同步收藏夹"')
 
       // 1. 从服务器获取所有书签
       const serverBookmarks = await this.fetchServerBookmarks(settings)
       console.log('📚 从服务器获取到书签:', serverBookmarks.length, '个')
-
-      // 调试：打印前3个书签的folder信息
-      console.log('🔍 书签folder信息（前3个）:')
-      serverBookmarks.slice(0, 3).forEach((b, i) => {
-        console.log(`  书签${i + 1}: title="${b.title}", folder="${b.folder}"`)
-      })
 
       if (serverBookmarks.length === 0) {
         this.showMessage('服务器上没有书签数据', 'warning')
         return
       }
 
-      // 2. 获取浏览器当前书签（用于合并模式去重）
-      let localBookmarks = []
-      if (exportMode === 'merge') {
-        localBookmarks = await this.fetchLocalBookmarks()
-        console.log('🔖 浏览器现有书签:', localBookmarks.length, '个')
-      }
+      // 2. 清空"同步收藏夹"中的现有书签
+      await this.clearSyncFolderBookmarks()
+      console.log('🗑️ 已清空同步收藏夹中的书签')
 
-      // 3. 执行导出
-      let exportedCount = 0
-      let skippedCount = 0
-      const folderMap = new Map() // 用于缓存文件夹ID，避免重复创建
-
-      if (exportMode === 'replace') {
-        // 覆盖模式：清空后创建
-        await this.clearLocalBookmarks()
-        console.log('🗑️ 已清空浏览器书签')
-
-        // 创建新书签
-        for (const bookmark of serverBookmarks) {
-          try {
-            await this.createLocalBookmark(bookmark, folderMap)
-            exportedCount++
-          } catch (error) {
-            console.error('创建书签失败:', bookmark.title, error)
-          }
-        }
-      } else {
-        // 合并模式：只添加不存在的书签
-        const localUrls = new Set(localBookmarks.map(b => b.url))
-
-        for (const bookmark of serverBookmarks) {
-          if (localUrls.has(bookmark.url)) {
-            skippedCount++
-            continue
-          }
-
-          try {
-            await this.createLocalBookmark(bookmark, folderMap)
-            exportedCount++
-          } catch (error) {
-            console.error('创建书签失败:', bookmark.title, error)
-          }
-        }
-      }
+      // 3. 将服务器书签同步到浏览器"同步收藏夹"
+      await this.syncBookmarksToLocal(serverBookmarks)
+      console.log('⬇️ 已同步服务器书签到本地')
 
       console.log('✅ 导出完成！')
-      console.log('📤 新增书签:', exportedCount, '个')
-      if (skippedCount > 0) {
-        console.log('⏭️ 跳过重复:', skippedCount, '个')
-      }
-
-      this.showMessage(
-        `导出完成！新增 ${exportedCount} 个书签${skippedCount > 0 ? `，跳过 ${skippedCount} 个重复` : ''}`,
-        'success'
-      )
+      this.showMessage(`导出完成！同步了 ${serverBookmarks.length} 个书签到"同步收藏夹"`, 'success')
 
     } catch (error) {
       console.error('导出到浏览器失败:', error)

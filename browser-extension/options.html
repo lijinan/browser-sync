@@ -257,62 +257,6 @@
 
   <div id="statusMessage" class="status-message" style="display: none;"></div>
 
-  <!-- 工作模式选择 -->
-  <div class="section">
-    <div class="section-title">🎛️ 工作模式</div>
-    
-    <div class="mode-option" data-mode="cooperative">
-      <input type="radio" name="workMode" value="cooperative" id="mode-cooperative">
-      <div class="mode-title">
-        <span class="mode-icon">🤝</span>
-        协作模式 (推荐)
-      </div>
-      <div class="mode-desc">
-        与浏览器原生功能并存，作为补充和增强。保持用户习惯，提供额外的同步功能。
-      </div>
-      <ul class="feature-list">
-        <li>✅ 保留浏览器原生书签和密码功能</li>
-        <li>✅ 手动保存到同步服务</li>
-        <li>✅ 跨浏览器数据同步</li>
-        <li>✅ 学习成本最低</li>
-      </ul>
-    </div>
-
-    <div class="mode-option" data-mode="smart">
-      <input type="radio" name="workMode" value="smart" id="mode-smart">
-      <div class="mode-title">
-        <span class="mode-icon">🧠</span>
-        智能模式
-      </div>
-      <div class="mode-desc">
-        智能拦截浏览器操作，自动保存到同步服务，但保留原生功能作为备选。
-      </div>
-      <ul class="feature-list">
-        <li>🔄 自动拦截Ctrl+D书签保存</li>
-        <li>🔄 自动检测密码表单并保存</li>
-        <li>✅ 保留原生功能作为备选</li>
-        <li>⚡ 提升使用效率</li>
-      </ul>
-    </div>
-
-    <div class="mode-option" data-mode="replace">
-      <input type="radio" name="workMode" value="replace" id="mode-replace">
-      <div class="mode-title">
-        <span class="mode-icon">🎯</span>
-        替换模式
-      </div>
-      <div class="mode-desc">
-        完全接管浏览器的书签和密码功能，提供统一的管理体验。
-      </div>
-      <ul class="feature-list">
-        <li>🔒 禁用浏览器原生密码管理器</li>
-        <li>📚 替换浏览器书签系统</li>
-        <li>🎯 统一的管理界面</li>
-        <li>⚠️ 需要适应新的操作方式</li>
-      </ul>
-    </div>
-  </div>
-
   <!-- 服务器设置 -->
   <div class="section">
     <div class="section-title">🌐 服务器设置</div>
@@ -326,42 +270,44 @@
       <label class="input-label" for="apiTimeout">请求超时 (秒)</label>
       <input type="number" class="input-field" id="apiTimeout" min="5" max="60" value="10">
     </div>
+
+    
+    <div class="setting-item">
+      <div class="setting-label">
+        <div class="setting-title">启用调试模式</div>
+        <div class="setting-desc">在控制台显示详细的调试信息</div>
+      </div>
+      <div class="toggle" id="debugMode"></div>
+    </div>
   </div>
 
   <!-- 书签设置 -->
   <div class="section">
-    <div class="section-title">📚 书签设置</div>
-    
+    <div class="section-title">🎯 书签同步</div>
+
     <div class="setting-item">
       <div class="setting-label">
-        <div class="setting-title">自动检测书签保存</div>
-        <div class="setting-desc">监听Ctrl+D快捷键，自动保存到同步服务</div>
+        <div class="setting-title">浏览器启动时自动同步</div>
+        <div class="setting-desc">每次启动浏览器时自动执行全量同步，确保本地数据与服务器一致</div>
       </div>
-      <div class="toggle" id="autoBookmarkSave"></div>
+      <div class="toggle" id="syncOnStartup"></div>
     </div>
-    
-    <div class="setting-item">
-      <div class="setting-label">
-        <div class="setting-title">覆盖浏览器书签快捷键</div>
-        <div class="setting-desc">使用Ctrl+D保存到同步服务而不是浏览器</div>
+
+    <div class="mode-option ">
+      <input type="radio" name="workMode" value="replace" id="mode-replace" checked>
+      <div class="mode-title">
+        <span class="mode-icon">🎯</span>
+        替换模式
       </div>
-      <div class="toggle" id="overrideBookmarkShortcut"></div>
-    </div>
-    
-    <div class="setting-item">
-      <div class="setting-label">
-        <div class="setting-title">显示保存确认</div>
-        <div class="setting-desc">保存书签时显示确认对话框</div>
+      <div class="mode-desc">
+        同步仅操作"同步收藏夹"文件夹，不影响浏览器其他书签。所有数据通过服务器进行跨浏览器同步。
       </div>
-      <div class="toggle active" id="confirmBookmarkSave"></div>
-    </div>
-    
-    <div class="setting-item">
-      <div class="setting-label">
-        <div class="setting-title">自动分类书签</div>
-        <div class="setting-desc">根据网站域名自动创建文件夹分类</div>
-      </div>
-      <div class="toggle" id="autoBookmarkCategory"></div>
+      <ul class="feature-list">
+        <li>✅ 仅操作"同步收藏夹"中的书签</li>
+        <li>✅ 跨浏览器数据同步</li>
+        <li>✅ 不影响浏览器原生书签</li>
+        <li>✅ WebSocket 实时同步</li>
+      </ul>
     </div>
   </div>
 
@@ -402,65 +348,16 @@
     </div>
   </div>
 
-  <!-- 高级设置 -->
-  <div class="section">
-    <div class="section-title">⚙️ 高级设置</div>
-    
-    <div class="setting-item">
-      <div class="setting-label">
-        <div class="setting-title">启用调试模式</div>
-        <div class="setting-desc">在控制台显示详细的调试信息</div>
-      </div>
-      <div class="toggle" id="debugMode"></div>
-    </div>
-    
-    <div class="setting-item">
-      <div class="setting-label">
-        <div class="setting-title">数据备份提醒</div>
-        <div class="setting-desc">定期提醒用户备份数据</div>
-      </div>
-      <div class="toggle active" id="backupReminder"></div>
-    </div>
-    
-    <div class="setting-item">
-      <div class="setting-label">
-        <div class="setting-title">统计使用情况</div>
-        <div class="setting-desc">收集匿名使用统计以改进功能</div>
-      </div>
-      <div class="toggle" id="usageStats"></div>
-    </div>
-  </div>
-
-  <!-- 测试工具 -->
-  <div class="section">
-    <div class="section-title">🧪 测试工具</div>
-    <div style="margin-bottom: 15px;">
-      <button class="btn btn-primary" onclick="openFirefoxTest()" style="font-size: 16px; padding: 12px 24px;">
-        🦊 打开Firefox专用测试工具
-      </button>
-    </div>
-    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 12px;">
-      <button class="btn btn-secondary" onclick="openTestTool('test-firefox-bookmark-sync.html')">Firefox书签同步测试</button>
-      <button class="btn btn-secondary" onclick="openTestTool('test-user-info.html')">用户信息测试</button>
-      <button class="btn btn-secondary" onclick="openTestTool('test-bookmark-duplicate-fix.html')">书签重复修复测试</button>
-      <button class="btn btn-secondary" onclick="openTestTool('test-url-matching.html')">URL匹配测试</button>
-      <button class="btn btn-secondary" onclick="openTestTool('test-folder-sync.html')">文件夹同步测试</button>
-      <button class="btn btn-secondary" onclick="openTestTool('test-full-sync.html')">全量同步测试</button>
-    </div>
-  </div>
-
   <!-- 操作按钮 -->
   <div class="section">
     <div style="display: flex; gap: 12px; justify-content: center;">
       <button class="btn btn-primary" id="saveSettings">保存设置</button>
       <button class="btn btn-secondary" id="resetSettings">重置为默认</button>
-      <button class="btn btn-secondary" id="exportSettings">导出设置</button>
-      <button class="btn btn-secondary" id="importSettings">导入设置</button>
     </div>
   </div>
 
   <div class="footer">
-    <div>书签密码同步助手 v2.0 - 可配置模式</div>
+    <div>书签密码同步助手</div>
     <div>私有化部署 · 安全可靠 · 灵活配置</div>
   </div>
 
