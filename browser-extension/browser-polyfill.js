@@ -235,6 +235,18 @@
             });
           },
 
+          getChildren: (id) => {
+            return new Promise((resolve, reject) => {
+              chrome.bookmarks.getChildren(id, (results) => {
+                if (chrome.runtime.lastError) {
+                  reject(new Error(chrome.runtime.lastError.message));
+                } else {
+                  resolve(results);
+                }
+              });
+            });
+          },
+
           // 事件监听器
           onCreated: {
             addListener: (callback) => {
@@ -267,6 +279,7 @@
           get: browser.bookmarks.get,
           remove: browser.bookmarks.remove,
           getTree: browser.bookmarks.getTree,
+          getChildren: browser.bookmarks.getChildren,
           
           // 事件监听器
           onCreated: {

@@ -892,37 +892,48 @@ class ExtensionPopup {
       }
 
       const bookmarks = []
+      let globalPosition = 0
 
-      // 递归遍历"同步收藏夹"下的书签
+      // 广度优先遍历"同步收藏夹"下的书签
       const traverseBookmarks = async (folderId, folderPath = []) => {
-        const children = await extensionAPI.bookmarks.getChildren(folderId)
+        const queue = [{ folderId, folderPath }]
 
-        for (const node of children) {
-          if (node.url) {
-            // 这是一个书签
-            // 跳过URL为空或无效的书签
-            if (!node.url.trim()) {
-              console.log('⚠️ 跳过空URL书签:', node.title)
-              continue
+        while (queue.length > 0) {
+          const { folderId: currentFolderId, folderPath: currentFolderPath } = queue.shift()
+          const children = await extensionAPI.bookmarks.getChildren(currentFolderId)
+
+          for (const node of children) {
+            if (node.url) {
+              // 这是一个书签
+              // 跳过URL为空或无效的书签
+              if (!node.url.trim()) {
+                console.log('⚠️ 跳过空URL书签:', node.title)
+                globalPosition++
+                continue
+              }
+
+              // 使用 > 作为多级文件夹的分隔符
+              // 根目录固定为"同步收藏夹"
+              const folder = currentFolderPath.length > 0
+                ? `同步收藏夹 > ${currentFolderPath.join(' > ')}`
+                : '同步收藏夹'
+
+              bookmarks.push({
+                title: node.title || 'Untitled',
+                url: node.url.trim(),
+                folder: folder,
+                tags: ['浏览器导入'],
+                description: `导入时间: ${node.dateAdded ? new Date(node.dateAdded).toLocaleString() : new Date().toLocaleString()}`,
+                position: globalPosition++
+              })
+            } else {
+              // 这是一个文件夹，加入队列（广度优先）
+              const folderName = node.title || '未命名文件夹'
+              queue.push({ 
+                folderId: node.id, 
+                folderPath: [...currentFolderPath, folderName] 
+              })
             }
-
-            // 使用 > 作为多级文件夹的分隔符
-            // 根目录固定为"同步收藏夹"
-            const folder = folderPath.length > 0
-              ? `同步收藏夹 > ${folderPath.join(' > ')}`
-              : '同步收藏夹'
-
-            bookmarks.push({
-              title: node.title || 'Untitled',
-              url: node.url.trim(),
-              folder: folder,
-              tags: ['浏览器导入'],
-              description: `导入时间: ${node.dateAdded ? new Date(node.dateAdded).toLocaleString() : new Date().toLocaleString()}`
-            })
-          } else if (node.children) {
-            // 这是一个文件夹，递归遍历
-            const folderName = node.title || '未命名文件夹'
-            await traverseBookmarks(node.id, [...folderPath, folderName])
           }
         }
       }

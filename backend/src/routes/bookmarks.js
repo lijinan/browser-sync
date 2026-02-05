@@ -17,7 +17,8 @@ const bookmarkSchema = Joi.object({
   url: Joi.string().min(1).required(),
   folder: Joi.string().allow('').optional(),
   tags: Joi.array().items(Joi.string()).optional(),
-  description: Joi.string().allow('').optional()
+  description: Joi.string().allow('').optional(),
+  position: Joi.number().integer().default(0)
 });
 
 // 加密数据
@@ -46,6 +47,7 @@ router.get('/', async (req, res, next) => {
 
     const bookmarks = await db('bookmarks')
       .where({ user_id: req.user.id })
+      .orderBy('position', 'asc')
       .orderBy('created_at', 'desc');
 
     console.log('[DEBUG] Found bookmarks count:', bookmarks.length);
@@ -56,9 +58,11 @@ router.get('/', async (req, res, next) => {
 
     for (const bookmark of bookmarks) {
       try {
+        const decrypted = decryptData(bookmark.encrypted_data);
         decryptedBookmarks.push({
           id: bookmark.id,
-          ...decryptData(bookmark.encrypted_data),
+          ...decrypted,
+          position: bookmark.position,
           created_at: bookmark.created_at,
           updated_at: bookmark.updated_at
         });
@@ -84,12 +88,16 @@ router.post('/', async (req, res, next) => {
     const { error, value } = bookmarkSchema.validate(req.body);
     if (error) throw error;
 
+    const position = value.position || 0;
+    delete value.position;
+
     // 加密书签数据
     const encryptedData = encryptData(value);
 
     const [bookmark] = await db('bookmarks').insert({
       user_id: req.user.id,
       encrypted_data: encryptedData,
+      position: position,
       created_at: new Date(),
       updated_at: new Date()
     }).returning('*');
@@ -97,6 +105,7 @@ router.post('/', async (req, res, next) => {
     const bookmarkData = {
       id: bookmark.id,
       ...value,
+      position: bookmark.position,
       created_at: bookmark.created_at,
       updated_at: bookmark.updated_at
     };
@@ -121,6 +130,11 @@ router.put('/:id', async (req, res, next) => {
 
     const bookmarkId = req.params.id;
 
+    const position = value.position !== undefined ? value.position : null;
+    if (position !== null) {
+      delete value.position;
+    }
+
     // 检查书签是否存在且属于当前用户
     const existingBookmark = await db('bookmarks')
       .where({ id: bookmarkId, user_id: req.user.id })
@@ -133,16 +147,23 @@ router.put('/:id', async (req, res, next) => {
     // 加密更新的数据
     const encryptedData = encryptData(value);
 
+    const updateData = {
+      encrypted_data: encryptedData,
+      updated_at: new Date()
+    };
+
+    if (position !== null) {
+      updateData.position = position;
+    }
+
     await db('bookmarks')
       .where({ id: bookmarkId })
-      .update({
-        encrypted_data: encryptedData,
-        updated_at: new Date()
-      });
+      .update(updateData);
 
     const bookmarkData = {
       id: bookmarkId,
       ...value,
+      position: position !== null ? position : existingBookmark.position,
       updated_at: new Date()
     };
 
@@ -168,16 +189,20 @@ router.get('/search', async (req, res, next) => {
     }
 
     const bookmarks = await db('bookmarks')
-      .where({ user_id: req.user.id });
+      .where({ user_id: req.user.id })
+      .orderBy('position', 'asc')
+      .orderBy('created_at', 'desc');
 
     // 解密并搜索，跳过解密失败的书签
     let searchResults = [];
 
     for (const bookmark of bookmarks) {
       try {
+        const decrypted = decryptData(bookmark.encrypted_data);
         searchResults.push({
           id: bookmark.id,
-          ...decryptData(bookmark.encrypted_data),
+          ...decrypted,
+          position: bookmark.position,
           created_at: bookmark.created_at,
           updated_at: bookmark.updated_at
         });
@@ -241,9 +266,11 @@ router.delete('/:id', async (req, res, next) => {
     let bookmarkData;
     try {
       // 解密书签数据用于通知
+      const decrypted = decryptData(existingBookmark.encrypted_data);
       bookmarkData = {
         id: existingBookmark.id,
-        ...decryptData(existingBookmark.encrypted_data),
+        ...decrypted,
+        position: existingBookmark.position,
         created_at: existingBookmark.created_at,
         updated_at: existingBookmark.updated_at
       };
@@ -253,7 +280,8 @@ router.delete('/:id', async (req, res, next) => {
       bookmarkData = {
         id: existingBookmark.id,
         title: '(无法解密)',
-        url: ''
+        url: '',
+        position: existingBookmark.position
       };
     }
 
