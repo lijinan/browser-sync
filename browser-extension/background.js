@@ -910,6 +910,13 @@ class ExtensionBackground {
       if (!bookmark || bookmark.length === 0) return
 
       const bookmarkNode = bookmark[0]
+      
+      // 检查是否是文件夹（没有URL的书签项）
+      if (!bookmarkNode.url) {
+        console.log('📁 检测到文件夹移动，跳过同步:', bookmarkNode.title)
+        return
+      }
+
       const isNowInSyncFolder = await this.checkBookmarkInSyncFolder(id)
       
       // 检查登录状态

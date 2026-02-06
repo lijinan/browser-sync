@@ -373,9 +373,9 @@ class ExtensionPopup {
     
     // 2. 检查浏览器是否支持书签API
     if (extensionAPI.bookmarks) {
-      // 3. 清空"同步收藏夹"中的现有书签
+      // 3. 清空"同步收藏夹"中的现有书签和文件夹
       await this.clearSyncFolderBookmarks()
-      console.log('🗑️ 已清空同步收藏夹中的书签')
+      console.log('🗑️ 已清空同步收藏夹中的书签和文件夹')
       
       // 4. 将服务器书签同步到浏览器"同步收藏夹"
       await this.syncBookmarksToLocal(serverBookmarks)
@@ -404,7 +404,7 @@ class ExtensionPopup {
     return data.bookmarks || []
   }
 
-  // 清空"同步收藏夹"中的书签
+  // 清空"同步收藏夹"中的书签和文件夹
   async clearSyncFolderBookmarks() {
     if (!extensionAPI.bookmarks) {
       return
@@ -420,17 +420,20 @@ class ExtensionPopup {
         return
       }
       
-      // 递归删除同步收藏夹中的所有书签（保留文件夹结构）
+      // 递归删除同步收藏夹中的所有子项（包括书签和文件夹）
       const clearBookmarksRecursive = async (folderId) => {
         const children = await extensionAPI.bookmarks.getChildren(folderId)
         
-        for (const node of children) {
+        // 倒序删除，避免索引变化问题
+        for (let i = children.length - 1; i >= 0; i--) {
+          const node = children[i]
           if (node.url) {
             // 这是一个书签，删除它
             await extensionAPI.bookmarks.remove(node.id)
-          } else if (node.children) {
-            // 这是一个文件夹，递归处理
+          } else {
+            // 这是一个文件夹，递归处理后删除文件夹本身
             await clearBookmarksRecursive(node.id)
+            await extensionAPI.bookmarks.remove(node.id)
           }
         }
       }
@@ -440,9 +443,9 @@ class ExtensionPopup {
         await clearBookmarksRecursive(syncFolder.id)
       }
       
-      console.log('✅ 已清空"同步收藏夹"中的书签')
+      console.log('✅ 已清空"同步收藏夹"中的所有书签和文件夹')
     } catch (error) {
-      console.error('清空同步收藏夹书签失败:', error)
+      console.error('清空同步收藏夹失败:', error)
     }
   }
 
@@ -1091,9 +1094,9 @@ class ExtensionPopup {
         return
       }
 
-      // 2. 清空"同步收藏夹"中的现有书签
+      // 2. 清空"同步收藏夹"中的现有书签和文件夹
       await this.clearSyncFolderBookmarks()
-      console.log('🗑️ 已清空同步收藏夹中的书签')
+      console.log('🗑️ 已清空同步收藏夹中的书签和文件夹')
 
       // 3. 将服务器书签同步到浏览器"同步收藏夹"
       await this.syncBookmarksToLocal(serverBookmarks)
