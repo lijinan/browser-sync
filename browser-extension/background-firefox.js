@@ -267,7 +267,7 @@ class ExtensionBackgroundFirefox {
   async performFullSync() {
     try {
       console.log('🔄 Firefox开始执行全量同步...')
-      
+
       const settings = await this.extensionAPI.storage.sync.get(['token', 'serverUrl'])
       if (!settings.token) {
         console.log('❌ Firefox未登录，无法执行全量同步')
@@ -310,26 +310,37 @@ class ExtensionBackgroundFirefox {
       // 同步服务器书签到本地 (简化版本)
       for (const serverBookmark of serverBookmarks) {
         try {
+          // 数据校验：确保书签数据有效
+          if (!serverBookmark || !serverBookmark.url || !serverBookmark.url.trim()) {
+            console.error('❌ Firefox书签数据无效，跳过同步:', serverBookmark)
+            continue
+          }
+
+          if (!serverBookmark.title || !serverBookmark.title.trim()) {
+            console.error('❌ Firefox书签标题为空，跳过同步:', serverBookmark.url)
+            continue
+          }
+
           // 检查书签是否已存在
           const existingBookmarks = await this.extensionAPI.bookmarks.search({ url: serverBookmark.url })
-          
+
           if (existingBookmarks.length === 0) {
             // 书签不存在，创建新书签
             const targetFolderId = await this.ensureFolderPathForSync(syncFolder.id, serverBookmark.folder)
-            
+
             await this.extensionAPI.bookmarks.create({
               title: serverBookmark.title,
               url: serverBookmark.url,
               parentId: targetFolderId
             })
-            
+
             console.log(`➕ Firefox创建书签: ${serverBookmark.title}`)
             syncedCount++
           }
-          
+
           // 避免请求过快
           await new Promise(resolve => setTimeout(resolve, 100))
-          
+
         } catch (error) {
           console.error(`❌ Firefox同步书签失败: ${serverBookmark.title}`, error)
         }
@@ -374,27 +385,31 @@ class ExtensionBackgroundFirefox {
       if (!folderPath || folderPath === '同步收藏夹') {
         return syncFolderId
       }
-      
+
       // 规范化路径：处理重复的"同步收藏夹"前缀
       // 例如 "同步收藏夹 > 同步收藏夹 > 编程语言" 变为 "同步收藏夹 > 编程语言"
       let normalizedPath = folderPath
       while (normalizedPath.startsWith('同步收藏夹 > 同步收藏夹')) {
         normalizedPath = normalizedPath.replace('同步收藏夹 > 同步收藏夹', '同步收藏夹')
       }
-      
+
       // 解析文件夹路径 "同步收藏夹 > 个人资料 > 工作"
       const pathParts = normalizedPath.split(' > ').slice(1) // 移除"同步收藏夹"部分
-      
+
       let currentFolderId = syncFolderId
-      
+
       // 逐级创建/查找文件夹
       for (const folderName of pathParts) {
-        if (!folderName.trim()) continue
-        
+        // 跳过空文件夹名称
+        if (!folderName || !folderName.trim()) {
+          console.log('⚠️ Firefox跳过空文件夹名称')
+          continue
+        }
+
         // 在当前文件夹下查找子文件夹
         const children = await this.extensionAPI.bookmarks.getChildren(currentFolderId)
         let targetFolder = children.find(child => !child.url && child.title === folderName)
-        
+
         if (targetFolder) {
           currentFolderId = targetFolder.id
         } else {
@@ -406,7 +421,7 @@ class ExtensionBackgroundFirefox {
           currentFolderId = newFolder.id
         }
       }
-      
+
       return currentFolderId
     } catch (error) {
       console.error('❌ Firefox创建文件夹路径失败:', error)

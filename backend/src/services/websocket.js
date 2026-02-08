@@ -221,12 +221,29 @@ class WebSocketService {
         const bookmarks = await db('bookmarks')
           .where({ user_id: userId })
           .select('id', 'encrypted_data', 'created_at', 'updated_at');
-        data.bookmarks = bookmarks.map(b => ({
-          id: b.id,
-          encrypted_data: b.encrypted_data,
-          created_at: b.created_at,
-          updated_at: b.updated_at
-        }));
+
+        // 解密书签数据，跳过解密失败的书签
+        const decryptedBookmarks = [];
+        const CryptoJS = require('crypto-js');
+
+        for (const bookmark of bookmarks) {
+          try {
+            const bytes = CryptoJS.AES.decrypt(bookmark.encrypted_data, process.env.ENCRYPTION_KEY);
+            const decryptedString = bytes.toString(CryptoJS.enc.Utf8);
+            const decrypted = JSON.parse(decryptedString);
+
+            decryptedBookmarks.push({
+              id: bookmark.id,
+              ...decrypted,
+              created_at: bookmark.created_at,
+              updated_at: bookmark.updated_at
+            });
+          } catch (decryptError) {
+            console.error(`书签 ID ${bookmark.id} 解密失败 (WebSocket初始数据):`, decryptError.message);
+          }
+        }
+
+        data.bookmarks = decryptedBookmarks;
       }
 
       // 获取用户的密码数据
@@ -234,12 +251,29 @@ class WebSocketService {
         const passwords = await db('passwords')
           .where({ user_id: userId })
           .select('id', 'encrypted_data', 'created_at', 'updated_at');
-        data.passwords = passwords.map(p => ({
-          id: p.id,
-          encrypted_data: p.encrypted_data,
-          created_at: p.created_at,
-          updated_at: p.updated_at
-        }));
+
+        // 解密密码数据，跳过解密失败的密码
+        const decryptedPasswords = [];
+        const CryptoJS = require('crypto-js');
+
+        for (const password of passwords) {
+          try {
+            const bytes = CryptoJS.AES.decrypt(password.encrypted_data, process.env.ENCRYPTION_KEY);
+            const decryptedString = bytes.toString(CryptoJS.enc.Utf8);
+            const decrypted = JSON.parse(decryptedString);
+
+            decryptedPasswords.push({
+              id: password.id,
+              ...decrypted,
+              created_at: password.created_at,
+              updated_at: password.updated_at
+            });
+          } catch (decryptError) {
+            console.error(`密码 ID ${password.id} 解密失败 (WebSocket初始数据):`, decryptError.message);
+          }
+        }
+
+        data.passwords = decryptedPasswords;
       }
 
       // 发送初始化数据

@@ -185,7 +185,18 @@ class WebSocketManagerSW {
     try {
       console.log('🔄 开始同步书签到本地:', bookmarkData.title);
       console.log('📁 目标文件夹:', bookmarkData.folder);
-      
+
+      // 数据校验：确保书签数据有效
+      if (!bookmarkData || !bookmarkData.url || !bookmarkData.url.trim()) {
+        console.error('❌ 书签数据无效，跳过同步:', bookmarkData);
+        return;
+      }
+
+      if (!bookmarkData.title || !bookmarkData.title.trim()) {
+        console.error('❌ 书签标题为空，跳过同步:', bookmarkData.url);
+        return;
+      }
+
       // 检查是否在同步收藏夹中
       const syncFolders = await this.searchBookmarks({ title: '同步收藏夹' });
       if (syncFolders.length === 0) {
@@ -195,13 +206,13 @@ class WebSocketManagerSW {
 
       const syncFolder = syncFolders[0];
       console.log('✅ 找到同步收藏夹:', syncFolder.id);
-      
+
       // 解析文件夹路径并创建/查找目标文件夹
       const targetFolderId = await this.ensureFolderPath(syncFolder.id, bookmarkData.folder);
-      
+
       // 在同步收藏夹内搜索现有书签（更精确的搜索）
       const existingBookmarks = await this.findBookmarkInSyncFolder(syncFolder.id, bookmarkData.url, bookmarkData.title);
-      
+
       if (action === 'created' && existingBookmarks.length === 0) {
         // 创建新书签
         const newBookmark = await this.createBookmark({
@@ -209,16 +220,16 @@ class WebSocketManagerSW {
           url: bookmarkData.url,
           parentId: targetFolderId
         });
-        
+
         console.log('✅ 书签已同步到本地:', newBookmark.title);
         console.log('📁 创建位置:', targetFolderId);
         this.showNotification(`书签"${bookmarkData.title}"已从服务器同步到本地`, 'success');
-        
+
       } else if (action === 'updated' && existingBookmarks.length > 0) {
         // 更新现有书签
         const existingBookmark = existingBookmarks[0];
         let needsUpdate = false;
-        
+
         // 检查标题是否需要更新
         if (existingBookmark.title !== bookmarkData.title) {
           await this.updateBookmark(existingBookmark.id, {
@@ -227,7 +238,7 @@ class WebSocketManagerSW {
           needsUpdate = true;
           console.log('✏️ 书签标题已更新:', bookmarkData.title);
         }
-        
+
         // 检查文件夹位置是否需要更新
         if (existingBookmark.parentId !== targetFolderId) {
           await this.moveBookmark(existingBookmark.id, {
@@ -236,24 +247,24 @@ class WebSocketManagerSW {
           needsUpdate = true;
           console.log('📁 书签位置已更新:', bookmarkData.folder);
         }
-        
+
         if (needsUpdate) {
           this.showNotification(`书签"${bookmarkData.title}"已从服务器更新`, 'success');
         }
       } else if (action === 'updated' && existingBookmarks.length === 0) {
         // 书签不存在，但在创建前再次检查避免重复
         console.log('⚠️ 未找到现有书签，准备创建新书签');
-        
+
         // 最后一次检查：在目标文件夹中查找相同URL的书签
         const duplicateCheck = await this.findBookmarkInFolder(targetFolderId, bookmarkData.url);
-        
+
         if (duplicateCheck.length === 0) {
           const newBookmark = await this.createBookmark({
             title: bookmarkData.title,
             url: bookmarkData.url,
             parentId: targetFolderId
           });
-          
+
           console.log('➕ 书签已创建到本地:', newBookmark.title);
           this.showNotification(`书签"${bookmarkData.title}"已从服务器同步到本地`, 'success');
         } else {
@@ -268,7 +279,7 @@ class WebSocketManagerSW {
           }
         }
       }
-      
+
     } catch (error) {
       console.error('❌ 同步书签到本地失败:', error);
     }
@@ -278,23 +289,27 @@ class WebSocketManagerSW {
   async ensureFolderPath(syncFolderId, folderPath) {
     try {
       console.log('🔍 解析文件夹路径:', folderPath);
-      
+
       // 如果没有指定文件夹或只是"同步收藏夹"，直接返回根目录
       if (!folderPath || folderPath === '同步收藏夹') {
         console.log('📁 使用同步收藏夹根目录');
         return syncFolderId;
       }
-      
+
       // 解析文件夹路径 "同步收藏夹 > 个人资料 > 工作"
       const pathParts = folderPath.split(' > ').slice(1); // 移除"同步收藏夹"部分
       console.log('📂 文件夹路径部分:', pathParts);
-      
+
       let currentFolderId = syncFolderId;
-      
+
       // 逐级创建/查找文件夹
       for (const folderName of pathParts) {
-        if (!folderName.trim()) continue;
-        
+        // 跳过空文件夹名称
+        if (!folderName || !folderName.trim()) {
+          console.log('⚠️ 跳过空文件夹名称');
+          continue
+        }
+
         console.log('🔍 查找/创建文件夹:', folderName);
         
         // 在当前文件夹下查找子文件夹
