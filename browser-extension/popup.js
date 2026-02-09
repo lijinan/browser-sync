@@ -1080,6 +1080,9 @@ class ExtensionPopup {
         return
       }
 
+      // 设置导出标志，避免触发自动同步
+      await extensionAPI.storage.sync.set({ isExporting: true })
+
       exportBtn.innerHTML = '<span class="loading"></span> 导出中...'
       exportBtn.disabled = true
 
@@ -1109,6 +1112,9 @@ class ExtensionPopup {
       console.error('导出到浏览器失败:', error)
       this.showMessage('导出失败: ' + error.message, 'error')
     } finally {
+      // 清除导出标志，恢复自动同步
+      await extensionAPI.storage.sync.set({ isExporting: false })
+
       const exportBtn = document.getElementById('exportToBrowserBtn')
       exportBtn.innerHTML = `
         <svg class="action-icon" viewBox="0 0 24 24" fill="currentColor">

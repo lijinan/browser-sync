@@ -1,5 +1,5 @@
 {
-  "manifest_version": 3,
+  "manifest_version": 2,
   "name": "书签密码同步助手",
   "version": "2.0.0",
   "description": "可配置的书签密码管理扩展，支持多种工作模式",
@@ -8,18 +8,16 @@
     "storage",
     "tabs",
     "contextMenus",
-    "scripting",
+    "notifications",
     "bookmarks",
-    "commands",
-    "webNavigation"
-  ],
-  "host_permissions": [
+    "webNavigation",
     "http://localhost:3001/*",
     "https://*/*",
     "http://*/*"
   ],
   "background": {
-    "service_worker": "background.js"
+    "scripts": ["browser-polyfill.js", "websocket-manager.js", "background-firefox.js"],
+    "persistent": false
   },
   "content_scripts": [
     {
@@ -33,11 +31,14 @@
       "run_at": "document_end"
     }
   ],
-  "action": {
+  "browser_action": {
     "default_popup": "popup.html",
     "default_title": "书签密码同步"
   },
-  "options_page": "options.html",
+  "options_ui": {
+    "page": "options.html",
+    "open_in_tab": true
+  },
   "commands": {
     "save-bookmark": {
       "suggested_key": {
@@ -53,9 +54,15 @@
     }
   },
   "web_accessible_resources": [
-    {
-      "resources": ["inject.js", "browser-polyfill.js"],
-      "matches": ["<all_urls>"]
+    "inject.js", 
+    "browser-polyfill.js",
+    "firefox-test.html",
+    "test/*.html"
+  ],
+  "applications": {
+    "gecko": {
+      "id": "bookmark-sync@example.com",
+      "strict_min_version": "57.0"
     }
-  ]
+  }
 }

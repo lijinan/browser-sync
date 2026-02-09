@@ -838,6 +838,12 @@ class ExtensionBackgroundFirefox {
   // 书签创建事件处理 - Firefox版本
   async onBookmarkCreated(id, bookmark) {
     try {
+      const { isImporting, isExporting } = await this.extensionAPI.storage.sync.get(['isImporting', 'isExporting'])
+      if (isImporting || isExporting) {
+        console.log('🚫 Firefox正在导入/导出，跳过书签创建同步')
+        return
+      }
+
       console.log('📚 Firefox书签创建:', bookmark.title)
 
       // 检查是否为文件夹类型（没有URL的书签项）
@@ -889,6 +895,12 @@ class ExtensionBackgroundFirefox {
   // 书签删除事件处理 - Firefox版本
   async onBookmarkRemoved(id, removeInfo) {
     try {
+      const { isImporting, isExporting } = await this.extensionAPI.storage.sync.get(['isImporting', 'isExporting'])
+      if (isImporting || isExporting) {
+        console.log('🚫 Firefox正在导入/导出，跳过书签删除同步')
+        return
+      }
+
       console.log('🗑️ Firefox书签删除:', removeInfo.node?.title || 'Unknown')
 
       // 检查删除的书签是否在同步收藏夹中
@@ -953,6 +965,12 @@ class ExtensionBackgroundFirefox {
   // 书签移动事件处理 - Firefox版本
   async onBookmarkMoved(id, moveInfo) {
     try {
+      const { isImporting, isExporting } = await this.extensionAPI.storage.sync.get(['isImporting', 'isExporting'])
+      if (isImporting || isExporting) {
+        console.log('🚫 Firefox正在导入/导出，跳过书签移动同步')
+        return
+      }
+
       console.log('📁 Firefox书签移动:', id)
 
       // 获取移动后的书签信息
@@ -1006,6 +1024,12 @@ class ExtensionBackgroundFirefox {
   // 书签更新事件处理 - Firefox版本
   async onBookmarkChanged(id, changeInfo) {
     try {
+      const { isImporting, isExporting } = await this.extensionAPI.storage.sync.get(['isImporting', 'isExporting'])
+      if (isImporting || isExporting) {
+        console.log('🚫 Firefox正在导入/导出，跳过书签更新同步')
+        return
+      }
+
       console.log('✏️ Firefox书签更新:', changeInfo.title || 'Unknown')
 
       // 检查书签是否在同步收藏夹中
