@@ -16,7 +16,7 @@
     "http://*/*"
   ],
   "background": {
-    "scripts": ["browser-polyfill.js", "websocket-manager.js", "background-firefox.js"],
+    "scripts": ["browser-polyfill.js", "background-common.js", "websocket-manager.js", "background-firefox.js"],
     "persistent": false
   },
   "content_scripts": [
