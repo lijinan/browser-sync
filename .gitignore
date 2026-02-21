@@ -28,3 +28,7 @@ Thumbs.db
 *.local.*
 
 .grepai/
+
+extension-tests
+
+playwright-report

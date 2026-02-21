@@ -1,0 +1,127 @@
+{
+  "project": {
+    "name": "browser-sync",
+    "displayName": "书签密码同步应用",
+    "version": "1.0.0",
+    "description": "支持私有化部署的多端书签和密码同步应用，端到端加密",
+    "author": "leon",
+    "license": "MIT"
+  },
+  "architecture": {
+    "type": "three-tier",
+    "components": ["backend", "web-client", "browser-extension"],
+    "patterns": ["REST API", "WebSocket", "JWT Authentication", "End-to-End Encryption"]
+  },
+  "modules": {
+    "backend": {
+      "path": "backend/",
+      "type": "api-service",
+      "tech": ["Node.js", "Express", "PostgreSQL", "Knex.js"],
+      "port": 3001,
+      "entry": "backend/src/app.js",
+      "docs": "docs/backend/",
+      "routes": {
+        "auth": "backend/src/routes/auth.js",
+        "bookmarks": "backend/src/routes/bookmarks.js",
+        "passwords": "backend/src/routes/passwords.js",
+        "import-export": "backend/src/routes/import-export.js"
+      },
+      "services": {
+        "websocket": "backend/src/services/websocket.js"
+      },
+      "middleware": {
+        "auth": "backend/src/middleware/auth.js",
+        "errorHandler": "backend/src/middleware/errorHandler.js"
+      },
+      "config": {
+        "database": "backend/src/config/database.js"
+      }
+    },
+    "web-client": {
+      "path": "web-client/",
+      "type": "spa",
+      "tech": ["React 18", "Vite", "Ant Design", "React Router"],
+      "port": 3002,
+      "entry": "web-client/src/main.jsx",
+      "docs": "docs/frontend/",
+      "pages": {
+        "Dashboard": "web-client/src/pages/Dashboard.jsx",
+        "Bookmarks": "web-client/src/pages/Bookmarks.jsx",
+        "Passwords": "web-client/src/pages/Passwords.jsx",
+        "Login": "web-client/src/pages/Login.jsx",
+        "Register": "web-client/src/pages/Register.jsx",
+        "ImportExport": "web-client/src/pages/ImportExport.jsx"
+      },
+      "contexts": {
+        "AuthContext": "web-client/src/contexts/AuthContext.jsx",
+        "ThemeContext": "web-client/src/contexts/ThemeContext.jsx"
+      },
+      "services": {
+        "api": "web-client/src/services/api.js"
+      }
+    },
+    "browser-extension": {
+      "path": "browser-extension/",
+      "type": "browser-extension",
+      "tech": ["Manifest V3", "Service Worker", "WebSocket Client"],
+      "manifest": "browser-extension/manifest.json",
+      "docs": "docs/extension/",
+      "scripts": {
+        "background": "browser-extension/background.js",
+        "content": "browser-extension/content.js",
+        "popup": "browser-extension/popup.js",
+        "options": "browser-extension/options.js"
+      },
+      "modules": {
+        "background-common": "browser-extension/background-common.js",
+        "websocket-manager": "browser-extension/websocket-manager.js"
+      }
+    }
+  },
+  "database": {
+    "type": "PostgreSQL",
+    "port": 5432,
+    "name": "bookmark_sync",
+    "orm": "Knex.js",
+    "docs": "docs/database/",
+    "migrations": "backend/migrations/",
+    "tables": ["users", "bookmarks", "passwords"]
+  },
+  "api": {
+    "baseUrl": "/api",
+    "docs": "docs/api/",
+    "endpoints": {
+      "auth": {
+        "prefix": "/api/auth",
+        "methods": ["POST /register", "POST /login", "GET /me", "POST /verify-password"]
+      },
+      "bookmarks": {
+        "prefix": "/api/bookmarks",
+        "methods": ["GET /", "POST /", "PUT /:id", "DELETE /:id"]
+      },
+      "passwords": {
+        "prefix": "/api/passwords",
+        "methods": ["GET /", "GET /:id", "POST /", "PUT /:id", "DELETE /:id"]
+      },
+      "import-export": {
+        "prefix": "/api/import-export",
+        "methods": ["GET /bookmarks/export", "GET /bookmarks/export/html", "POST /bookmarks/import"]
+      }
+    }
+  },
+  "security": {
+    "authentication": "JWT",
+    "encryption": "AES-256",
+    "passwordHashing": "bcrypt",
+    "rateLimiting": true
+  },
+  "documentation": {
+    "index": "docs/INDEX.md",
+    "system": "docs/system/",
+    "backend": "docs/backend/",
+    "frontend": "docs/frontend/",
+    "extension": "docs/extension/",
+    "database": "docs/database/",
+    "api": "docs/api/"
+  }
+}
