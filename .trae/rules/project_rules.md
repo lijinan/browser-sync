@@ -1,0 +1,1 @@
+1. 如果修改的是manifest.json，需要根据情况修改manifest-firefox.json和manifest-chrome.json

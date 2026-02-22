@@ -180,31 +180,51 @@ class WebSocketManager {
     try {
       console.log('🔄 开始同步书签到本地:', bookmarkData.title);
       console.log('📁 目标文件夹:', bookmarkData.folder);
-      
-      // 检查是否在同步收藏夹中
-      const syncFolders = await this.searchBookmarks({ title: '同步收藏夹' });
-      if (syncFolders.length === 0) {
-        console.log('⚠️ 未找到"同步收藏夹"，跳过本地同步');
-        return;
-      }
 
-      const syncFolder = syncFolders[0];
-      console.log('✅ 找到同步收藏夹:', syncFolder.id);
-      
-      // 解析文件夹路径并创建/查找目标文件夹
-      const targetFolderId = await this.ensureFolderPath(syncFolder.id, bookmarkData.folder);
-      
-      // 在同步收藏夹内搜索现有书签（更精确的搜索）
-      const existingBookmarks = await this.findBookmarkInSyncFolder(syncFolder.id, bookmarkData.url, bookmarkData.title);
+      // 设置标志，表示正在从服务器同步书签到本地
+      // 这会阻止 onBookmarkCreated 事件将书签再次同步回服务器
+      await this.setStorageData({ isSyncingFromServer: true });
+
+      try {
+        // 检查是否在同步收藏夹中
+        const syncFolders = await this.searchBookmarks({ title: '同步收藏夹' });
+        if (syncFolders.length === 0) {
+          console.log('⚠️ 未找到"同步收藏夹"，跳过本地同步');
+          return;
+        }
+
+        const syncFolder = syncFolders[0];
+        console.log('✅ 找到同步收藏夹:', syncFolder.id);
+
+        // 解析文件夹路径并创建/查找目标文件夹
+        const targetFolderId = await this.ensureFolderPath(syncFolder.id, bookmarkData.folder);
+
+        // 在同步收藏夹内搜索现有书签（更精确的搜索）
+        const existingBookmarks = await this.findBookmarkInSyncFolder(syncFolder.id, bookmarkData.url, bookmarkData.title);
       
       if (action === 'created' && existingBookmarks.length === 0) {
+        // 再次检查目标文件夹中是否已存在相同URL的书签（防止重复创建）
+        const duplicateInTarget = await this.findBookmarkInFolder(targetFolderId, bookmarkData.url);
+
+        if (duplicateInTarget.length > 0) {
+          console.log('⚠️ 目标文件夹中已存在相同URL的书签，跳过创建:', bookmarkData.title);
+          // 如果标题不同，更新标题
+          if (duplicateInTarget[0].title !== bookmarkData.title) {
+            await this.updateBookmark(duplicateInTarget[0].id, {
+              title: bookmarkData.title
+            });
+            console.log('✏️ 更新现有书签标题:', bookmarkData.title);
+          }
+          return;
+        }
+
         // 创建新书签
         const newBookmark = await this.createBookmark({
           title: bookmarkData.title,
           url: bookmarkData.url,
           parentId: targetFolderId
         });
-        
+
         console.log('✅ Firefox书签已同步到本地:', newBookmark.title);
         console.log('📁 创建位置:', targetFolderId);
         this.showNotification(`书签"${bookmarkData.title}"已从服务器同步到本地`, 'success');
@@ -263,9 +283,17 @@ class WebSocketManager {
           }
         }
       }
-      
+
+      } finally {
+        // 清除同步标志
+        await this.setStorageData({ isSyncingFromServer: false });
+        console.log('🔄 清除 isSyncingFromServer 标志');
+      }
+
     } catch (error) {
       console.error('❌ 同步书签到本地失败:', error);
+      // 确保即使出错也清除标志
+      await this.setStorageData({ isSyncingFromServer: false });
     }
   }
 
@@ -273,13 +301,57 @@ class WebSocketManager {
   async ensureFolderPath(syncFolderId, folderPath) {
     try {
       console.log('🔍 解析文件夹路径:', folderPath);
-      
+
       // 如果没有指定文件夹或只是"同步收藏夹"，直接返回根目录
       if (!folderPath || folderPath === '同步收藏夹') {
         console.log('📁 使用同步收藏夹根目录');
         return syncFolderId;
       }
-      
+
+      // 规范化路径：处理 "书签栏 > 同步收藏夹" 这种情况
+      // 如果路径中包含"同步收藏夹"，我们需要找到它并以其为根
+      if (folderPath.includes('同步收藏夹')) {
+        // 找到"同步收藏夹"在路径中的位置
+        const parts = folderPath.split(' > ');
+        const syncIndex = parts.findIndex(p => p === '同步收藏夹');
+
+        if (syncIndex !== -1) {
+          // 只保留"同步收藏夹"之后的部分
+          const pathParts = parts.slice(syncIndex + 1);
+          console.log('📂 文件夹路径部分:', pathParts);
+
+          let currentFolderId = syncFolderId;
+
+          // 逐级创建/查找文件夹
+          for (const folderName of pathParts) {
+            if (!folderName.trim()) continue;
+
+            console.log('🔍 查找/创建文件夹:', folderName);
+
+            // 在当前文件夹下查找子文件夹
+            const children = await this.getBookmarkChildren(currentFolderId);
+            let targetFolder = children.find(child => !child.url && child.title === folderName);
+
+            if (targetFolder) {
+              console.log('✅ 找到现有文件夹:', folderName, targetFolder.id);
+              currentFolderId = targetFolder.id;
+            } else {
+              // 创建新文件夹
+              console.log('📁 创建新文件夹:', folderName);
+              const newFolder = await this.createBookmark({
+                title: folderName,
+                parentId: currentFolderId
+              });
+              console.log('✅ 文件夹创建成功:', folderName, newFolder.id);
+              currentFolderId = newFolder.id;
+            }
+          }
+
+          console.log('📁 最终目标文件夹ID:', currentFolderId);
+          return currentFolderId;
+        }
+      }
+
       // 解析文件夹路径 "同步收藏夹 > 个人资料 > 工作"
       const pathParts = folderPath.split(' > ').slice(1); // 移除"同步收藏夹"部分
       console.log('📂 文件夹路径部分:', pathParts);
@@ -560,6 +632,18 @@ class WebSocketManager {
       return await browser.storage.sync.get(keys);
     }
     return {};
+  }
+
+  // 设置存储数据 (需要在具体环境中实现)
+  async setStorageData(data) {
+    // Chrome/Firefox兼容
+    if (typeof chrome !== 'undefined' && chrome.storage) {
+      return new Promise((resolve) => {
+        chrome.storage.sync.set(data, resolve);
+      });
+    } else if (typeof browser !== 'undefined' && browser.storage) {
+      return await browser.storage.sync.set(data);
+    }
   }
 
   // 搜索书签 (需要在具体环境中实现)

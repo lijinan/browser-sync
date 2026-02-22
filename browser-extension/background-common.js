@@ -349,8 +349,46 @@ class ExtensionBackgroundBase {
         return syncFolderId
       }
 
-      // 规范化路径：处理重复的"同步收藏夹"前缀
+      // 规范化路径：处理 "书签栏 > 同步收藏夹" 这种情况
+      // 如果路径中包含"同步收藏夹"，我们需要找到它并以其为根
       let normalizedPath = folderPath
+
+      if (normalizedPath.includes('同步收藏夹')) {
+        // 找到"同步收藏夹"在路径中的位置
+        const parts = normalizedPath.split(' > ')
+        const syncIndex = parts.findIndex(p => p === '同步收藏夹')
+
+        if (syncIndex !== -1) {
+          // 只保留"同步收藏夹"之后的部分
+          const pathParts = parts.slice(syncIndex + 1)
+
+          let currentFolderId = syncFolderId
+
+          // 逐级创建/查找文件夹
+          for (const folderName of pathParts) {
+            if (!folderName || !folderName.trim()) continue
+
+            // 在当前文件夹下查找子文件夹
+            const children = await this.extensionAPI.bookmarks.getChildren(currentFolderId)
+            let targetFolder = children.find(child => !child.url && child.title === folderName)
+
+            if (targetFolder) {
+              currentFolderId = targetFolder.id
+            } else {
+              // 创建新文件夹
+              const newFolder = await this.extensionAPI.bookmarks.create({
+                title: folderName,
+                parentId: currentFolderId
+              })
+              currentFolderId = newFolder.id
+            }
+          }
+
+          return currentFolderId
+        }
+      }
+
+      // 规范化路径：处理重复的"同步收藏夹"前缀
       while (normalizedPath.startsWith('同步收藏夹 > 同步收藏夹')) {
         normalizedPath = normalizedPath.replace('同步收藏夹 > 同步收藏夹', '同步收藏夹')
       }
@@ -642,9 +680,15 @@ class ExtensionBackgroundBase {
   // 书签创建事件处理
   async onBookmarkCreated(id, bookmark) {
     try {
-      const { isImporting, isExporting } = await this.getStorageData(['isImporting', 'isExporting'])
+      const { isImporting, isExporting, isSyncingFromServer } = await this.getStorageData(['isImporting', 'isExporting', 'isSyncingFromServer'])
       if (isImporting || isExporting) {
         console.log('🚫 正在导入/导出，跳过书签创建同步')
+        return
+      }
+
+      // 如果当前正在从服务器同步书签到本地，跳过（防止循环同步）
+      if (isSyncingFromServer) {
+        console.log('🚫 正在从服务器同步书签到本地，跳过自动同步到服务器')
         return
       }
 
@@ -1235,6 +1279,12 @@ class ExtensionBackgroundBase {
     }
 
     console.log('✅ 书签不重复，开始保存')
+
+    // 获取当前最大排序号
+    const maxPosition = await this.getMaxBookmarkPosition(settings.token, settings.serverUrl)
+    data.position = maxPosition + 1
+    console.log('📊 设置排序号为:', data.position)
+
     const response = await fetch(`${settings.serverUrl}/bookmarks`, {
       method: 'POST',
       headers: {
@@ -1434,6 +1484,33 @@ class ExtensionBackgroundBase {
     } catch (error) {
       return { loggedIn: false, error: error.message }
     }
+  }
+
+  // 获取当前最大书签排序号
+  async getMaxBookmarkPosition(token, serverUrl) {
+    try {
+      const response = await fetch(`${serverUrl}/bookmarks`, {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      })
+
+      if (response.ok) {
+        const data = await response.json()
+        const bookmarks = data.bookmarks || []
+
+        if (bookmarks.length === 0) {
+          return -1
+        }
+
+        // 找到最大的position值
+        const maxPosition = Math.max(...bookmarks.map(b => b.position !== undefined ? b.position : 0))
+        return maxPosition
+      }
+    } catch (error) {
+      console.error('❌ 获取最大排序号失败:', error)
+    }
+    return -1
   }
 
   // 提取域名
