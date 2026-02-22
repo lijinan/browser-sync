@@ -4,21 +4,21 @@
   "description": "书签密码同步应用Web客户端",
   "private": true,
   "dependencies": {
+    "@ant-design/icons": "^5.2.6",
+    "antd": "^5.8.6",
+    "axios": "^1.5.0",
+    "crypto-js": "^4.1.1",
+    "js-cookie": "^3.0.5",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
-    "react-router-dom": "^6.15.0",
-    "axios": "^1.5.0",
-    "antd": "^5.8.6",
-    "@ant-design/icons": "^5.2.6",
-    "crypto-js": "^4.1.1",
-    "js-cookie": "^3.0.5"
+    "react-router-dom": "^6.15.0"
   },
   "devDependencies": {
-    "@vitejs/plugin-react": "^4.0.4",
-    "vite": "^4.4.9",
+    "@types/js-cookie": "^3.0.3",
     "@types/react": "^18.2.21",
     "@types/react-dom": "^18.2.7",
-    "@types/js-cookie": "^3.0.3"
+    "@vitejs/plugin-react": "^4.0.4",
+    "vite": "^7.3.1"
   },
   "scripts": {
     "dev": "vite",

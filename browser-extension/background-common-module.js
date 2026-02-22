@@ -1004,6 +1004,12 @@ export class ExtensionBackgroundBase {
 
   showNotification(message, type = 'info') {
     try {
+      // 检查 notifications API 是否可用
+      if (!this.extensionAPI.notifications) {
+        console.warn('Notifications API not available, message:', message)
+        return
+      }
+
       const iconMap = {
         success: '✅',
         error: '❌',
@@ -1011,12 +1017,19 @@ export class ExtensionBackgroundBase {
         info: 'ℹ️'
       }
 
-      this.extensionAPI.notifications.create({
+      const notificationOptions = {
         type: 'basic',
-        iconUrl: 'icons/icon48.png',
         title: '书签密码同步助手',
         message: `${iconMap[type] || ''} ${message}`
-      })
+      }
+
+      try {
+        notificationOptions.iconUrl = this.extensionAPI.runtime.getURL('icons/icon48.png')
+      } catch (e) {
+        // 如果获取图标URL失败，则不使用图标
+      }
+
+      this.extensionAPI.notifications.create(notificationOptions)
     } catch (error) {
       console.error('Show notification error:', error)
     }

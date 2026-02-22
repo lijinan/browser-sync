@@ -169,6 +169,12 @@ const Bookmarks = () => {
 
   const columns = [
     {
+      title: '排序号',
+      dataIndex: 'position',
+      key: 'position',
+      width: 80,
+    },
+    {
       title: '标题',
       dataIndex: 'title',
       key: 'title',
