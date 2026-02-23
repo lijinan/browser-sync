@@ -6,6 +6,7 @@ export class ExtensionBackgroundBase {
     this.extensionAPI = extensionAPI
     this.settings = {}
     this.wsManager = null
+    this.isFullSyncing = false  // 全量同步锁，防止重复调用
   }
 
   init() {
@@ -59,6 +60,34 @@ export class ExtensionBackgroundBase {
 
     this.setupStorageChangeListener()
     this.loadSettings()
+    this.performInitialFullSync()
+  }
+
+  // 执行初始全量同步 - 仅在扩展初始化时调用一次
+  async performInitialFullSync() {
+    try {
+      // 检查是否正在导入数据
+      const { isImporting } = await this.getStorageData(['isImporting'])
+      if (isImporting) {
+        console.log('🚫 检测到正在导入数据，跳过初始全量同步')
+        return
+      }
+
+      // 检查用户是否已登录
+      const loginStatus = await this.checkLoginStatus()
+      if (!loginStatus.loggedIn) {
+        console.log('⚠️ 用户未登录，跳过初始全量同步')
+        return
+      }
+
+      // 延迟执行，等待WebSocket连接建立
+      console.log('🔄 将在3秒后执行初始全量同步...')
+      setTimeout(() => {
+        this.performFullSync()
+      }, 3000)
+    } catch (error) {
+      console.error('❌ 初始全量同步失败:', error)
+    }
   }
 
   setupStorageChangeListener() {
@@ -142,9 +171,16 @@ export class ExtensionBackgroundBase {
   }
 
   async performFullSync() {
-    try {
-      console.log('🔄 开始执行全量同步...')
+    // 检查是否正在同步中，防止重复调用
+    if (this.isFullSyncing) {
+      console.log('⚠️ 全量同步正在进行中，跳过本次调用')
+      return
+    }
 
+    this.isFullSyncing = true
+    console.log('🔄 开始执行全量同步...')
+
+    try {
       if (!this.extensionAPI.bookmarks) {
         console.error('❌ 书签API不可用')
         this.showNotification('书签API不可用，无法执行同步', 'error')
@@ -251,6 +287,8 @@ export class ExtensionBackgroundBase {
     } catch (error) {
       console.error('❌ 全量同步失败:', error)
       this.showNotification('全量同步失败: ' + error.message, 'error')
+    } finally {
+      this.isFullSyncing = false  // 释放锁
     }
   }
 
@@ -381,18 +419,8 @@ export class ExtensionBackgroundBase {
       if (loginStatus.loggedIn) {
         console.log('✅ 用户已登录，启动WebSocket连接')
         this.startWebSocketConnection()
-
-        const { isImporting } = await this.getStorageData(['isImporting'])
-        if (isImporting) {
-          console.log('🚫 检测到正在导入数据，跳过自动全量同步')
-        } else {
-          console.log('🔄 开始执行全量同步...')
-          setTimeout(() => {
-            this.performFullSync()
-          }, 3000)
-        }
       } else {
-        console.log('⚠️ 用户未登录，跳过WebSocket连接和全量同步')
+        console.log('⚠️ 用户未登录，跳过WebSocket连接')
       }
     } catch (error) {
       console.error('Failed to load settings:', error)
@@ -660,8 +688,14 @@ export class ExtensionBackgroundBase {
 
   async onBookmarkMoved(id, moveInfo) {
     try {
-      const { isImporting, isExporting } = await this.getStorageData(['isImporting', 'isExporting'])
+      const { isImporting, isExporting, isSyncingFromServer } = await this.getStorageData(['isImporting', 'isExporting', 'isSyncingFromServer'])
       if (isImporting || isExporting) {
+        return
+      }
+
+      // 如果当前正在从服务器同步书签到本地，跳过（防止循环同步）
+      if (isSyncingFromServer) {
+        console.log('🚫 正在从服务器同步书签到本地，跳过书签移动同步')
         return
       }
 
