@@ -17,9 +17,9 @@
 ## 架构设计
 
 ```javascript
-// background.js - Chrome MV3 Service Worker
-import { ExtensionBackgroundBase } from './background-common-module.js';
-import { WebSocketManagerSW } from './websocket-manager-sw-module.js';
+// background.js - Service Worker 入口
+import { ExtensionBackgroundBase } from './background-core.js';
+import { WebSocketManagerSW } from './websocket-manager.js';
 
 class ExtensionBackground extends ExtensionBackgroundBase {
   constructor() {
@@ -225,7 +225,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 ```javascript
 async saveBookmark(bookmarkData) {
   const token = await this.getToken();
-  
+
   const response = await fetch(`${this.settings.serverUrl}/api/bookmarks`, {
     method: 'POST',
     headers: {
@@ -272,7 +272,7 @@ async saveCurrentPage(tab) {
 ```javascript
 async getPasswordsForUrl(url) {
   const token = await this.getToken();
-  
+
   const response = await fetch(`${this.settings.serverUrl}/api/passwords`, {
     headers: {
       'Authorization': `Bearer ${token}`
@@ -280,9 +280,9 @@ async getPasswordsForUrl(url) {
   });
 
   const data = await response.json();
-  
+
   // 过滤匹配当前 URL 的密码
-  return data.passwords.filter(p => 
+  return data.passwords.filter(p =>
     url.includes(new URL(p.site_url).hostname)
   );
 }
@@ -338,7 +338,7 @@ async loadSettings() {
 async updateSettings(newSettings) {
   await chrome.storage.sync.set(newSettings);
   this.settings = { ...this.settings, ...newSettings };
-  
+
   // 重新初始化相关功能
   if (newSettings.contextMenu !== undefined) {
     this.updateContextMenus();
@@ -376,7 +376,7 @@ initWebSocketManager() {
 
 ---
 
-## 公共基类 (background-common.js)
+## 公共基类 (background-core.js)
 
 ### 类定义
 
@@ -457,3 +457,13 @@ class ExtensionBackgroundBase {
 - 需要持久化重要状态到 storage
 - WebSocket 连接需要处理重连
 - 避免使用全局变量存储状态
+
+---
+
+## 文件变更记录
+
+> **2025-02-23**: 简化扩展结构
+> - 删除 chrome/、firefox/、shared/ 子目录
+> - 合并重复的 background.js 文件
+> - 统一使用 ES Module 格式
+> - 升级 Firefox 到 Manifest V3

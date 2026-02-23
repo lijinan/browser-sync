@@ -20,14 +20,12 @@
 
 | 类型 | 文件路径 | 说明 |
 |------|----------|------|
-| 清单文件 | [browser-extension/manifest.json](../../../browser-extension/manifest.json) | Chrome 扩展配置 |
-| Firefox 清单 | [browser-extension/manifest-firefox.json](../../../browser-extension/manifest-firefox.json) | Firefox 配置 |
-| 后台脚本 | [browser-extension/background.js](../../../browser-extension/background.js) | Chrome Service Worker |
-| Firefox 后台 | [browser-extension/background-firefox.js](../../../browser-extension/background-firefox.js) | Firefox 后台脚本 |
-| 公共基类 | [browser-extension/background-common-module.js](../../../browser-extension/background-common-module.js) | 跨浏览器基类 |
+| 清单文件 | [browser-extension/manifest.json](../../../browser-extension/manifest.json) | 扩展配置（兼容 Chrome/Firefox） |
+| 后台脚本 | [browser-extension/background.js](../../../browser-extension/background.js) | Service Worker 入口 |
+| 公共基类 | [browser-extension/background-core.js](../../../browser-extension/background-core.js) | 后台脚本公共基类 |
 | 内容脚本 | [browser-extension/content.js](../../../browser-extension/content.js) | 页面注入脚本 |
 | 弹窗脚本 | [browser-extension/popup.js](../../../browser-extension/popup.js) | 弹窗逻辑 |
-| WebSocket 管理器 | [browser-extension/websocket-manager-sw-module.js](../../../browser-extension/websocket-manager-sw-module.js) | SW 版本 |
+| WebSocket 管理器 | [browser-extension/websocket-manager.js](../../../browser-extension/websocket-manager.js) | WebSocket 连接管理 |
 
 ---
 
@@ -53,7 +51,7 @@
   ]
 }
 
-// background.js
+// background-core.js
 createContextMenus() {
   chrome.contextMenus.create({
     id: 'save-bookmark',
@@ -124,7 +122,7 @@ chrome.runtime.sendMessage({
   console.log('收到响应:', response);
 });
 
-// 接收消息 (background.js)
+// 接收消息 (background-core.js)
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   switch (request.type) {
     case 'GET_SETTINGS':
@@ -146,27 +144,16 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 使用 browser-polyfill 统一 API：
 
 ```javascript
-// 使用统一的 API
-browser.runtime.sendMessage({ type: 'ACTION' });
-browser.storage.local.get('key');
-browser.bookmarks.create({ title: 'New', url: 'http://...' });
+// manifest.json 已统一支持 Chrome/Edge/Firefox (MV3)
+// 所有浏览器使用相同的代码
 
-// 而不是
+// 使用标准的 chrome API
 chrome.runtime.sendMessage({ type: 'ACTION' });
+chrome.storage.local.get('key');
+chrome.bookmarks.create({ title: 'New', url: 'http://...' });
 ```
 
-**Firefox 特殊处理：**
-```javascript
-// background-firefox.js
-import { ExtensionBackgroundBase } from './background-common-module.js';
-
-class FirefoxBackground extends ExtensionBackgroundBase {
-  constructor() {
-    super(browser);  // 使用 browser API
-    this.init();
-  }
-}
-```
+**注意：** Firefox 109+ 支持 Manifest V3，与 Chrome 使用相同的代码结构。
 
 ---
 
@@ -204,152 +191,41 @@ chrome.storage.onChanged.addListener((changes, namespace) => {
 
 ---
 
-### 6. 书签自动同步不工作
+### 6. WebSocket 连接失败
 
 **症状：**
-- 浏览器书签变化后未同步到服务器
+- 无法连接 WebSocket 服务器
+- 连接后频繁断开
 
 **修复代码：**
 ```javascript
-// background.js
-chrome.bookmarks.onCreated.addListener((id, bookmark) => {
-  if (this.settings.autoSync) {
-    this.syncBookmarkToServer(bookmark);
+// websocket-manager.js
+async connect() {
+  if (this.isConnecting || (this.ws && this.ws.readyState === WebSocket.OPEN)) {
+    return;
   }
-});
 
-// 检查设置
-async loadSettings() {
-  const settings = await chrome.storage.sync.get({
-    autoSync: false,
-    serverUrl: 'http://localhost:3001'
-  });
-  this.settings = settings;
-}
-
-// 同步书签
-async syncBookmarkToServer(bookmark) {
-  const token = await this.getToken();
-
-  const response = await fetch(`${this.settings.serverUrl}/api/bookmarks`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${token}`
-    },
-    body: JSON.stringify({
-      title: bookmark.title,
-      url: bookmark.url,
-      folder: ''
-    })
-  });
-
-  if (response.ok) {
-    this.showNotification('书签已同步', 'success');
-  }
-}
-```
-
----
-
-### 7. 快捷键不工作
-
-**症状：**
-- 按下快捷键无反应
-
-**修复步骤：**
-1. 检查 manifest.json 中的 commands 配置
-2. 检查命令监听器是否注册
-
-**相关代码：**
-```javascript
-// manifest.json
-{
-  "commands": {
-    "save-bookmark": {
-      "suggested_key": {
-        "default": "Ctrl+Shift+D",
-        "mac": "Command+Shift+D"
-      },
-      "description": "保存书签到同步服务"
+  try {
+    this.isConnecting = true;
+    
+    const settings = await this.getStorageData(['token', 'serverUrl']);
+    if (!settings.token) {
+      console.log('❌ WebSocket连接失败: 未登录');
+      this.isConnecting = false;
+      return;
     }
+
+    const serverUrl = settings.serverUrl || 'http://localhost:3001';
+    const wsUrl = serverUrl.replace('http', 'ws') + `/ws?token=${settings.token}`;
+    
+    this.ws = new WebSocket(wsUrl);
+    this.setupEventHandlers();
+    
+  } catch (error) {
+    console.error('❌ WebSocket连接失败:', error);
+    this.isConnecting = false;
+    this.scheduleReconnect();
   }
-}
-
-// background.js
-chrome.commands.onCommand.addListener((command) => {
-  if (command === 'save-bookmark') {
-    this.saveCurrentPage();
-  }
-});
-```
-
----
-
-### 8. 内容脚本注入失败
-
-**症状：**
-- 页面中没有注入脚本
-- 自动填充不工作
-
-**修复代码：**
-```javascript
-// manifest.json
-{
-  "content_scripts": [
-    {
-      "matches": ["<all_urls>"],
-      "js": ["content.js"],
-      "run_at": "document_end"
-    }
-  ]
-}
-
-// content.js
-// 检查是否被正确加载
-console.log('Bookmark Sync content script loaded');
-
-// 检测登录表单
-document.addEventListener('DOMContentLoaded', () => {
-  const forms = document.querySelectorAll('form');
-  forms.forEach(form => {
-    if (isLoginForm(form)) {
-      injectAutoFillButton(form);
-    }
-  });
-});
-```
-
----
-
-### 9. 通知权限问题
-
-**症状：**
-- 通知无法显示
-- 控制台提示权限错误
-
-**修复步骤：**
-1. 检查 manifest.json 中的 permissions
-2. 检查通知 API 调用
-
-**相关代码：**
-```javascript
-// manifest.json
-{
-  "permissions": [
-    "notifications"  // 必需
-  ]
-}
-
-// background.js
-showNotification(title, message = '') {
-  chrome.notifications.create({
-    type: 'basic',
-    iconUrl: 'icons/icon48.png',
-    title: title,
-    message: message,
-    priority: 1
-  });
 }
 ```
 
@@ -357,62 +233,39 @@ showNotification(title, message = '') {
 
 ## 调试技巧
 
-### 查看日志
+### 1. 查看 Service Worker 日志
 
 ```
-Chrome:
 1. 打开 chrome://extensions/
-2. 找到扩展，点击"查看 Service Worker"
-
-Firefox:
-1. 打开 about:debugging#/runtime/this-firefox
-2. 找到扩展，点击"检查"
-
-Content Script:
-在网页开发者工具控制台查看
+2. 找到扩展，点击"背景页"或"Service Worker"
+3. 查看 Console 日志
 ```
 
-### 重新加载扩展
+### 2. 检查存储数据
 
+```javascript
+// 在 Service Worker Console 中执行
+chrome.storage.sync.get(null, (data) => {
+  console.log('所有存储数据:', data);
+});
 ```
-Chrome: chrome://extensions/ -> 点击刷新按钮
-Firefox: about:debugging -> 临时附加插件
-```
 
----
+### 3. 测试消息通信
 
-## 清单文件检查清单
-
-```json
-{
-  "manifest_version": 3,
-  "permissions": [
-    "activeTab",
-    "storage",
-    "tabs",
-    "contextMenus",
-    "scripting",
-    "bookmarks",
-    "commands",
-    "webNavigation",
-    "notifications"
-  ],
-  "host_permissions": [
-    "http://localhost:3001/*",
-    "https://*/*",
-    "http://*/*"
-  ]
-}
+```javascript
+// 测试 popup 到 background 通信
+chrome.runtime.sendMessage({ type: 'PING' }, (response) => {
+  console.log('响应:', response);
+});
 ```
 
 ---
 
-## 切换浏览器版本
+## 文件变更记录
 
-```bash
-# 切换到 Chrome 版本
-./switch-to-chrome.sh
-
-# 切换到 Firefox 版本
-./switch-to-firefox.sh
-```
+> **2025-02-23**: 简化扩展结构
+> - 删除 chrome/、firefox/、shared/ 子目录
+> - 合并重复的 background.js 文件
+> - 统一使用 ES Module 格式
+> - 升级 Firefox 到 Manifest V3
+> - 删除切换脚本（不再需要）
