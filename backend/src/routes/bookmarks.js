@@ -299,4 +299,156 @@ router.delete('/:id', async (req, res, next) => {
   }
 });
 
+// 书签同步接口 - 根据书签是否在同步收藏夹中，自动决定创建、更新或删除
+const syncBookmarkSchema = Joi.object({
+  id: Joi.number().integer().optional(),  // 服务器书签ID（如果有）
+  title: Joi.string().required(),
+  url: Joi.string().min(1).required(),
+  folder: Joi.string().allow('').optional(),
+  tags: Joi.array().items(Joi.string()).optional(),
+  description: Joi.string().allow('').optional(),
+  position: Joi.number().integer().default(0),
+  isInSyncFolder: Joi.boolean().default(true)  // 书签当前是否在同步收藏夹中
+});
+
+router.post('/sync', async (req, res, next) => {
+  try {
+    const { error, value } = syncBookmarkSchema.validate(req.body);
+    if (error) throw error;
+
+    const { id: bookmarkId, title, url, folder, tags, description, position, isInSyncFolder } = value;
+
+    // 如果前端提供了书签ID，直接查询该书签
+    let serverBookmark = null;
+    if (bookmarkId) {
+      const existingBookmark = await db('bookmarks')
+        .where({ id: bookmarkId, user_id: req.user.id })
+        .first();
+      
+      if (existingBookmark) {
+        try {
+          const decrypted = decryptData(existingBookmark.encrypted_data);
+          serverBookmark = { ...existingBookmark, ...decrypted };
+        } catch (decryptError) {
+          console.error(`书签 ID ${bookmarkId} 解密失败:`, decryptError.message);
+        }
+      }
+    }
+
+    // 如果通过ID没找到，或者没提供ID，则通过URL查找
+    if (!serverBookmark) {
+      // 使用数据库原生查询优化性能 - 只获取最近创建的100条书签
+      const recentBookmarks = await db('bookmarks')
+        .where({ user_id: req.user.id })
+        .orderBy('created_at', 'desc')
+        .limit(100);
+
+      for (const bookmark of recentBookmarks) {
+        try {
+          const decrypted = decryptData(bookmark.encrypted_data);
+          if (decrypted.url === url) {
+            serverBookmark = { ...bookmark, ...decrypted };
+            break;
+          }
+        } catch (decryptError) {
+          console.error(`书签 ID ${bookmark.id} 解密失败:`, decryptError.message);
+        }
+      }
+    }
+
+    // 情况1: 书签不在同步收藏夹中
+    if (!isInSyncFolder) {
+      if (serverBookmark) {
+        // 从服务器删除书签
+        await db('bookmarks')
+          .where({ id: serverBookmark.id, user_id: req.user.id })
+          .del();
+
+        webSocketService.notifyBookmarkChange(req.user.id, 'deleted', {
+          id: serverBookmark.id,
+          title,
+          url,
+          position: serverBookmark.position
+        });
+
+        return res.json({
+          action: 'deleted',
+          message: '书签已从服务器删除（移出同步收藏夹）'
+        });
+      }
+
+      return res.json({
+        action: 'none',
+        message: '书签不在同步收藏夹中，无需处理'
+      });
+    }
+
+    // 情况2: 书签在同步收藏夹中
+    const bookmarkData = {
+      title,
+      url,
+      folder: folder || '',
+      tags: tags || [],
+      description: description || ''
+    };
+
+    if (serverBookmark) {
+      // 更新现有书签
+      const encryptedData = encryptData(bookmarkData);
+
+      await db('bookmarks')
+        .where({ id: serverBookmark.id })
+        .update({
+          encrypted_data: encryptedData,
+          position: position,
+          updated_at: new Date()
+        });
+
+      const updatedBookmark = {
+        id: serverBookmark.id,
+        ...bookmarkData,
+        position: position,
+        updated_at: new Date()
+      };
+
+      webSocketService.notifyBookmarkChange(req.user.id, 'updated', updatedBookmark);
+
+      return res.json({
+        action: 'updated',
+        message: '书签已更新到服务器',
+        bookmark: updatedBookmark
+      });
+    } else {
+      // 创建新书签
+      const encryptedData = encryptData(bookmarkData);
+
+      const [newBookmark] = await db('bookmarks').insert({
+        user_id: req.user.id,
+        encrypted_data: encryptedData,
+        position: position,
+        created_at: new Date(),
+        updated_at: new Date()
+      }).returning('*');
+
+      const bookmarkResult = {
+        id: newBookmark.id,
+        ...bookmarkData,
+        position: position,
+        created_at: newBookmark.created_at,
+        updated_at: newBookmark.updated_at
+      };
+
+      webSocketService.notifyBookmarkChange(req.user.id, 'created', bookmarkResult);
+
+      return res.status(201).json({
+        action: 'created',
+        message: '书签已创建到服务器',
+        bookmark: bookmarkResult
+      });
+    }
+  } catch (error) {
+    next(error);
+  }
+});
+
 module.exports = router;

@@ -1,0 +1,10 @@
+{
+  "extensionName": {
+    "message": "书签密码同步助手",
+    "description": "扩展名称"
+  },
+  "extensionDescription": {
+    "message": "可配置的书签密码管理扩展，支持多种工作模式",
+    "description": "扩展描述"
+  }
+}

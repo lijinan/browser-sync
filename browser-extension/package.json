@@ -1,0 +1,22 @@
+{
+  "name": "bookmark-password-sync-extension",
+  "version": "2.0.0",
+  "description": "书签密码同步浏览器扩展",
+  "scripts": {
+    "build:chrome": "node scripts/build.js chrome",
+    "build:firefox": "node scripts/build.js firefox",
+    "build": "npm run build:chrome && npm run build:firefox",
+    "lint": "web-ext lint"
+  },
+  "devDependencies": {
+    "web-ext": "^7.0.0",
+    "fs-extra": "^11.0.0",
+    "archiver": "^6.0.0"
+  },
+  "keywords": [
+    "browser-extension",
+    "bookmark-sync",
+    "password-manager"
+  ],
+  "license": "MIT"
+}
